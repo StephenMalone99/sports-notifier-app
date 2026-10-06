@@ -34,6 +34,18 @@ liverpool:
     League Cup: Sky Sports
     default: check listings
 
+f1:
+  sessions: [Sprint Qualifying, Sprint, Qualifying, Race]   # add Practice 1/2/3 if wanted
+  remind: [Qualifying, Sprint, Race]                         # phone ping before these
+  remind_minutes_before: 60
+  tv: Sky Sports F1 / NOW
+
+results:                       # score alerts after games - set enabled: false for no spoilers
+  enabled: true
+  liverpool: true
+  cs2_favourites: true
+  f1: true                     # podium after the sprint and race
+
 notifications:
   daily_digest_hour: 9         # morning summary of today's events (local time)
   ntfy_server: https://ntfy.sh

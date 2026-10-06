@@ -7,11 +7,11 @@ from pathlib import Path
 import yaml
 
 from .models import Event
-from .sources import cs2, darts, liverpool
+from .sources import cs2, darts, f1, liverpool
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "data" / "events.json"
-SOURCES = {"cs2": cs2, "darts": darts, "liverpool": liverpool}
+SOURCES = {"cs2": cs2, "darts": darts, "liverpool": liverpool, "f1": f1}
 
 log = logging.getLogger("notifier")
 
@@ -40,6 +40,7 @@ def collect(cfg: dict | None = None) -> dict:
         finish = e.end or (e.start + timedelta(hours=3))
         return finish >= now and e.start <= horizon
 
+    events = list({e.id: e for e in events}.values())   # drop duplicates
     events = sorted(filter(still_relevant, events), key=lambda e: e.start)
     payload = {
         "updated": now.isoformat(),

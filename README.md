@@ -5,6 +5,7 @@ A personal app that keeps track of the sport I follow and sends alerts to my pho
 - **CS2:** top-tier tournaments, every match in them, and my favourite teams' matches at any event.
 - **Liverpool FC:** every fixture, with likely TV channels and starting line-ups before kick-off.
 - **PDC darts:** the majors and Premier League nights, where the big names play.
+- **Formula 1:** qualifying, sprint and race start times, with podium results.
 
 It has two parts:
 
@@ -22,6 +23,9 @@ It has two parts:
 | **Morning summary** | Once a day, just after 9am, on days something is on | "Your teams" matches, Liverpool kick-off and TV, CS2 events with today's matches and streams, darts sessions, and what's coming tomorrow |
 | **Favourite team reminder** | About an hour before Spirit, NAVI, FaZe, Vitality or Falcons play | `Team Spirit play in 50 min · Spirit vs 1WIN · ESL Pro League · BO3 · Watch: twitch.tv/eslcs` |
 | **Liverpool kick-off** | About an hour before kick-off. It waits for the line-ups if they aren't out yet. | `Liverpool kick off in 55 min - line-ups in · TV: Sky Sports… · both starting XIs` |
+| **F1 session** | About an hour before qualifying, sprint and race | `F1 Qualifying in 53 min · United States Grand Prix · 22:00 · TV: Sky Sports F1 / NOW` |
+| **Results** (optional) | After Liverpool, favourite-team and F1 events finish | `FT: Brentford 1-3 Liverpool` · `NAVI beat Team Falcons 2-1` · F1 podium |
+| **Problem alert** | If a data source has been failing for over 90 minutes, or the darts calendar is about to run out | `Notifier problem: liverpool not updating` |
 
 Each alert is sent only once. Tapping a notification opens the stream or the fixture page.
 
@@ -37,7 +41,7 @@ Each alert is sent only once. Tapping a notification opens the stream or the fix
 ## How it works
 
 ```
-                ┌──────────────┐   PandaScore (CS2)
+                ┌──────────────┐   PandaScore (CS2) · Jolpica (F1)
  GitHub Actions │  notifier/   │   football-data.org + TheSportsDB (Liverpool)
  every hour ───►│  collect.py  │◄─ ESPN (line-ups, match days only)
                 │  notify.py   │   data/darts.yaml (darts, kept by hand)
@@ -65,6 +69,7 @@ Each alert is sent only once. Tapping a notification opens the stream or the fix
 | Liverpool | ESPN public API (unofficial) | Starting line-ups. If it fails, the alert is still sent without them. |
 | Liverpool TV | `config.yaml` | Rule-based per competition (Ireland, 2026/27). There's no free listings source for the exact channel. |
 | Darts | `data/darts.yaml` | Curated from the PDC calendar. Needs updating about once a year. |
+| F1 | [Jolpica F1 API](https://github.com/jolpica/jolpica-f1) (free, no key) | Session times and results. It replaced the old Ergast API. |
 
 **Free plan limits:** everything stays well under the limits.
 
@@ -83,15 +88,17 @@ NotifierApp/
 │   ├── collect.py                 Fetches and merges all sources
 │   ├── notify.py                  Builds and sends the alerts
 │   ├── lineups.py                 Liverpool line-ups (ESPN)
+│   ├── results.py                 Scores after games (optional)
 │   ├── keystore.py / set_keys.py  Secure key storage
 │   ├── models.py                  Event format shared by everything
-│   └── sources/                   cs2.py · liverpool.py · darts.py
+│   └── sources/                   cs2.py · liverpool.py · darts.py · f1.py
 ├── templates/index.html           Dashboard page
 ├── app.py                         Dashboard server
 ├── config.yaml                    All settings (no secrets)
 ├── data/darts.yaml                Darts calendar
 ├── set_keys.bat                   Saves API keys on this PC
-└── start_dashboard.bat            Starts the dashboard
+├── start_dashboard.bat            Starts the dashboard
+└── create_shortcut.bat            Makes a desktop shortcut (run once)
 ```
 
 ---
@@ -105,6 +112,8 @@ NotifierApp/
 | `cs2.remind_minutes_before` | How long before a favourite team's match to send the reminder |
 | `liverpool.tv` | TV channels for each competition |
 | `liverpool.lineups` | `true` waits for the line-ups and includes them; `false` sends the reminder straight away |
+| `f1.sessions` / `f1.remind` | F1 sessions to show / to send a reminder for (practice sessions can be added) |
+| `results` | `enabled: false` turns off all score alerts (no spoilers); each sport can also be turned off separately |
 | `notifications.daily_digest_hour` | Hour the morning summary is sent |
 | `timezone` | Timezone used for alert and dashboard times |
 
@@ -136,7 +145,7 @@ If a key leaks, generate a new one on the provider's site and update it in both 
 
 1. Install **Python 3.14** from [python.org](https://www.python.org/downloads/windows/) and tick "Add python.exe to PATH".
 2. Run `set_keys.bat` once to save your keys.
-3. Run `start_dashboard.bat` whenever you want the dashboard. Close the black window to stop it.
+3. Run `create_shortcut.bat` once. After that, open the dashboard with the **Sports Notifier** shortcut on your desktop. Close the black window to stop it.
 
 ### GitHub (phone alerts)
 

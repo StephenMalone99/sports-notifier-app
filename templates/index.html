@@ -8,11 +8,11 @@
 <style>
   :root {
     --bg: #f6f6f4; --card: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0;
-    --cs2: #e8890c; --darts: #1f9d55; --liverpool: #c8102e;
+    --cs2: #e8890c; --darts: #1f9d55; --liverpool: #c8102e; --f1: #2563eb;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #141416; --card: #1d1d20; --text: #f1f1f3; --muted: #9a9aa2; --line: #2c2c31;
-            --cs2: #f5a623; --darts: #34c27a; --liverpool: #ff4d5e; }
+            --cs2: #f5a623; --darts: #34c27a; --liverpool: #ff4d5e; --f1: #5b8cff; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -35,6 +35,7 @@
   .bar { align-self: stretch; }
   .cs2 .bar { background: var(--cs2); } .darts .bar { background: var(--darts); }
   .liverpool .bar { background: var(--liverpool); }
+  .f1 .bar { background: var(--f1); }
   .title { font-weight: 600; }
   .title a { color: inherit; text-decoration: none; }
   .title a:hover { text-decoration: underline; }
@@ -55,7 +56,7 @@
   <header>
     <div>
       <h1>Sports Notifier</h1>
-      <div class="meta">CS2 top tier · PDC darts · Liverpool FC
+      <div class="meta">CS2 · Liverpool FC · F1 · PDC darts
         {% if updated %} · updated {{ updated|local("%H:%M %d %b") }}{% endif %}</div>
     </div>
     <form method="post" action="/refresh"><button type="submit">Refresh now</button></form>
@@ -65,6 +66,7 @@
     <button class="chip" data-sport="liverpool" aria-pressed="true"><span class="dot" style="background:var(--liverpool)"></span>Liverpool</button>
     <button class="chip" data-sport="cs2" aria-pressed="true"><span class="dot" style="background:var(--cs2)"></span>CS2</button>
     <button class="chip" data-sport="darts" aria-pressed="true"><span class="dot" style="background:var(--darts)"></span>Darts</button>
+    <button class="chip" data-sport="f1" aria-pressed="true"><span class="dot" style="background:var(--f1)"></span>F1</button>
   </div>
 
   {% macro card(e) %}

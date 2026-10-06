@@ -21,7 +21,7 @@ from .keystore import get_secret
 from .models import Event
 
 STATE = ROOT / "state" / "sent.json"
-ICON = {"cs2": "video_game", "darts": "dart", "liverpool": "soccer"}
+ICON = {"cs2": "video_game", "darts": "dart", "liverpool": "soccer", "f1": "checkered_flag"}
 log = logging.getLogger("notifier")
 
 
@@ -112,6 +112,16 @@ def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | N
             lines.append("No matches scheduled today (rest day or not announced yet)")
         parts.append("\n".join(lines))
 
+    # F1: today's sessions, grouped by Grand Prix
+    f1 = [e for e in events if e.sport == "f1" and on(e, day)]
+    for gp in dict.fromkeys(e.title.split(" - ")[0] for e in f1):
+        mine = [e for e in f1 if e.title.startswith(gp)]
+        lines = [f"F1 · {gp}" + (f" ({mine[0].detail})" if mine[0].detail else "")]
+        lines += [f"{t(e)}  {_tag(e, 'session:')}" for e in mine]
+        if _tag(mine[0], "tv:"):
+            lines.append(f"TV: {_tag(mine[0], 'tv:')}")
+        parts.append("\n".join(lines))
+
     # Darts
     for e in [e for e in events if e.sport == "darts" and on(e, day)]:
         if e.all_day:
@@ -140,8 +150,10 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
     tz = ZoneInfo(cfg.get("timezone", "Europe/Dublin"))
     now = now or datetime.now(timezone.utc)
     local = now.astimezone(tz)
+    status = {}
     if events is None:
         payload = collect(cfg)
+        status = payload["status"]
         for name, s in payload["status"].items():
             print(f"{name:10} {'OK  ' + str(s['count']) + ' events' if s['ok'] else 'FAILED  ' + s['error']}")
         events = [Event.from_dict(d) for d in payload["events"]]
@@ -171,6 +183,48 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
                     tags="video_game,star", click=e.url, priority="high"):
                 state[key] = now.isoformat()
                 sent.append(key)
+
+    # 1c) F1 session reminders
+    fc = cfg.get("f1", {})
+    lead = timedelta(minutes=fc.get("remind_minutes_before", 60))
+    remind = set(fc.get("remind", ["Qualifying", "Sprint", "Race"]))
+    for e in events:
+        if e.sport != "f1" or _tag(e, "session:") not in remind:
+            continue
+        key = f"f1-{e.id}"
+        if key not in state and now < e.start <= now + lead + timedelta(minutes=30):
+            mins = int((e.start - now).total_seconds() // 60)
+            if push(cfg, f"F1 {_tag(e, 'session:')} in {mins} min",
+                    f"{e.title.split(' - ')[0]}\n{e.detail}\n{e.start.astimezone(tz):%H:%M}"
+                    + (f" · TV: {_tag(e, 'tv:')}" if _tag(e, "tv:") else ""),
+                    tags="checkered_flag", click=e.url, priority="high"):
+                state[key] = now.isoformat()
+                sent.append(key)
+
+    # 1d) Results (optional)
+    rc = cfg.get("results", {})
+    if rc.get("enabled", True):
+        from . import results
+        from .sources.cs2 import _fav_aliases
+        jobs = []
+        if rc.get("liverpool", True):
+            jobs.append(("liverpool", lambda: results.liverpool(cfg, now)))
+        if rc.get("cs2_favourites", True):
+            jobs.append(("cs2", lambda: results.cs2(cfg, now, _fav_aliases(cfg.get("cs2", {})))))
+        if rc.get("f1", True):
+            jobs.append(("f1", lambda: results.f1(cfg, now)))
+        for name, job in jobs:
+            try:
+                for key, title, body, tags, click in job():
+                    if key not in state and push(cfg, title, body, tags=tags, click=click):
+                        state[key] = now.isoformat()
+                        sent.append(key)
+            except Exception as exc:
+                log.warning("%s results failed: %s", name, str(exc).split("?")[0][:150])
+
+    # 1e) Health: tell me if a source keeps failing, or the darts calendar runs out
+    if status:
+        sent += _health(cfg, status, state, now, local)
 
     # 2) Morning digest
     digest_key = f"digest-{local.date().isoformat()}"
@@ -228,6 +282,47 @@ def _liverpool_reminders(cfg, events, state, now, tz, sleep=None, clock=None) ->
     return sent
 
 
+def _health(cfg, status, state, now, local) -> list:
+    """Alert when a source has been failing for over 90 minutes (once a day),
+    and once a month when the darts calendar is about to run out."""
+    sent = []
+    for name, s in status.items():
+        flag = f"failing-{name}"
+        if s.get("ok"):
+            state.pop(flag, None)
+            continue
+        first = state.setdefault(flag, now.isoformat())
+        key = f"fail-{name}-{local.date().isoformat()}"
+        if now - datetime.fromisoformat(first) >= timedelta(minutes=90) and key not in state:
+            if push(cfg, f"Notifier problem: {name} not updating",
+                    f"{s.get('error', 'unknown error')}\n\nCheck the latest run under GitHub → Actions.",
+                    tags="warning", priority="high"):
+                state[key] = now.isoformat()
+                sent.append(key)
+    try:
+        from .sources import darts
+        last = max((e.end or e.start) for e in darts.fetch({}))
+        key = f"darts-calendar-{local:%Y-%m}"
+        if last - now < timedelta(days=60) and key not in state:
+            if push(cfg, "Update the darts calendar",
+                    f"data/darts.yaml runs out on {last:%d %b %Y}. "
+                    "Add next season's dates from pdc.tv/calendar.", tags="dart,memo"):
+                state[key] = now.isoformat()
+                sent.append(key)
+    except Exception as exc:
+        log.warning("darts calendar check failed: %s", exc)
+    return sent
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("Sent:", run() or "nothing due")
+    try:
+        print("Sent:", run() or "nothing due")
+    except Exception as exc:
+        # Last resort: the whole run crashed - say so on the phone, then fail the job
+        try:
+            push(load_config(), "Notifier crashed",
+                 f"{type(exc).__name__}: {str(exc)[:300]}\n\nCheck GitHub → Actions.",
+                 tags="rotating_light", priority="high")
+        finally:
+            raise
