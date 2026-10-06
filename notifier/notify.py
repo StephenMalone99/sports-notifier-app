@@ -176,6 +176,10 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
     state = _load_state()
     sent = []
 
+    # 1a) Time changes and postponements (before reminders, so a moved match
+    #     gets a fresh reminder for its new time)
+    sent += _changes(cfg, events, state, now, tz)
+
     # 1b) Favourite CS2 team reminders
     lead = timedelta(minutes=cfg.get("cs2", {}).get("remind_minutes_before", 60))
     for e in events:
@@ -290,6 +294,57 @@ def _liverpool_reminders(cfg, events, state, now, tz, sleep=None, clock=None) ->
         if push(cfg, title, body, tags="soccer,red_circle", click=e.url, priority="high"):
             state[key] = clock().isoformat()
             sent.append(key)
+    return sent
+
+
+def _watched(cfg, e: Event) -> bool:
+    if e.sport == "liverpool":
+        return True
+    if e.sport == "cs2":
+        return "fav" in e.tags and "match" in e.tags
+    if e.sport == "f1":
+        return _tag(e, "session:") in set(cfg.get("f1", {}).get("remind", ["Qualifying", "Sprint", "Race"]))
+    return False
+
+
+def _changes(cfg, events, state, now, tz) -> list:
+    """Ping when a watched match/session moves by 15+ minutes, or Liverpool is postponed.
+    The first time an event is seen its start time is just remembered (no alert)."""
+    if not cfg.get("notifications", {}).get("time_changes", True):
+        return []
+    threshold = timedelta(minutes=cfg.get("notifications", {}).get("time_change_minutes", 15))
+    fmt = lambda d: d.astimezone(tz).strftime("%a %d %b, %H:%M")
+    sent = []
+    for e in events:
+        if not _watched(cfg, e):
+            continue
+        # Postponed / suspended (Liverpool)
+        if "postponed" in e.tags:
+            key = f"postponed-{e.id}"
+            if key not in state and e.start > now - timedelta(days=1):
+                if push(cfg, f"Postponed: {e.title}",
+                        f"{e.competition} · was {fmt(e.start)}\nNew date to be confirmed.",
+                        tags="warning,soccer", click=e.url, priority="high"):
+                    state[key] = now.isoformat()
+                    sent.append(key)
+            continue
+        key = f"start-{e.id}"
+        prev = state.get(key)
+        state[key] = e.start.isoformat()
+        if not prev:
+            continue                                   # first sighting: just remember it
+        old = datetime.fromisoformat(prev)
+        if abs(e.start - old) < threshold or e.start < now - timedelta(minutes=30):
+            continue
+        later = e.start > old
+        icon = {"liverpool": "soccer", "cs2": "video_game", "f1": "checkered_flag"}.get(e.sport, "calendar")
+        if push(cfg, f"{'Delayed' if later else 'Moved earlier'}: {e.title}",
+                f"Now {fmt(e.start)} (was {fmt(old)})\n{e.competition}",
+                tags=f"alarm_clock,{icon}", click=e.url, priority="high"):
+            sent.append(f"moved-{e.id}")
+        # allow a fresh reminder for the new time
+        for prefix in ("ko-", "fav-", "f1-"):
+            state.pop(f"{prefix}{e.id}", None)
     return sent
 
 

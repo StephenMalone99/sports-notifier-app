@@ -66,6 +66,8 @@ results:                       # score alerts after games - set enabled: false f
 
 notifications:
   daily_digest_hour: 9         # morning summary of today's events (local time)
+  time_changes: true           # ping when your matches/sessions are delayed, moved or postponed
+  time_change_minutes: 15      # ignore smaller shifts
   ntfy_server: https://ntfy.sh
 
 dashboard:

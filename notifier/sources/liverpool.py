@@ -23,7 +23,7 @@ def _fd(cfg) -> list[Event]:
     r = requests.get(
         f"https://api.football-data.org/v4/teams/{FD_TEAM_ID}/matches",
         headers={"X-Auth-Token": token},
-        params={"status": "SCHEDULED,TIMED,IN_PLAY,PAUSED"},
+        params={"status": "SCHEDULED,TIMED,IN_PLAY,PAUSED,POSTPONED,SUSPENDED"},
         timeout=20,
     )
     r.raise_for_status()
@@ -39,6 +39,7 @@ def _fd(cfg) -> list[Event]:
             start=datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00")),
             competition=m["competition"]["name"],
             detail=" · ".join(x for x in [
+                "POSTPONED" if m.get("status") in ("POSTPONED", "SUSPENDED") else "",
                 "Home" if lfc_home else "Away",
                 m.get("venue") or ("Anfield" if lfc_home else ""),
                 m.get("stage", "").replace("_", " ").title()
@@ -46,7 +47,8 @@ def _fd(cfg) -> list[Event]:
                 f"Matchday {m['matchday']}" if m.get("matchday") else "",
             ] if x),
             url="https://www.liverpoolfc.com/fixtures",
-            tags=["home" if lfc_home else "away"],
+            tags=["home" if lfc_home else "away"]
+                 + (["postponed"] if m.get("status") in ("POSTPONED", "SUSPENDED") else []),
         ))
     return events
 
