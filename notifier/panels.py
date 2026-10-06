@@ -177,77 +177,102 @@ import re
 
 
 class _Tables(HTMLParser):
-    """Collects every <table class="wikitable"> as a list of rows of cell text."""
+    """Collects every <table class="wikitable"> as a list of rows of cell text.
+    Rank-change arrows (images titled Increase/Decrease/Steady) become +/-/= in the text."""
+    ARROWS = {"increase": "+", "decrease": "-", "steady": "="}
+
     def __init__(self):
         super().__init__()
-        self.tables, self._stack, self._row, self._cell = [], [], None, None
+        self.tables, self._depth, self._wiki, self._row, self._cell, self._skip = [], 0, [], None, None, 0
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         if tag == "table":
-            self._stack.append("wikitable" in (a.get("class") or ""))
-            if self._stack[-1] and len(self._stack) == 1:
+            self._depth += 1
+            is_wiki = "wikitable" in (a.get("class") or "")
+            self._wiki.append(is_wiki)
+            if is_wiki:
                 self.tables.append([])
-        elif self._stack and self._stack[0] and len(self._stack) == 1:
-            if tag == "tr":
-                self._row = []
-            elif tag in ("td", "th") and self._row is not None:
-                self._cell = []
-            elif tag in ("style", "sup"):
-                self._cell_skip = True
+            return
+        if not self._wiki or not self._wiki[-1]:
+            return
+        if tag == "tr":
+            self._row = []
+        elif tag in ("td", "th") and self._row is not None:
+            self._cell = []
+        elif tag in ("style", "sup"):
+            self._skip += 1
+        elif tag == "img" and self._cell is not None:
+            arrow = self.ARROWS.get((a.get("alt") or "").lower())
+            if arrow:
+                self._cell.append(arrow)
 
     def handle_endtag(self, tag):
-        if tag == "table" and self._stack:
-            self._stack.pop()
-        elif self._stack and self._stack[0] and len(self._stack) == 1:
-            if tag in ("td", "th") and self._cell is not None and self._row is not None:
-                self._row.append(" ".join("".join(self._cell).split()))
-                self._cell = None
-            elif tag == "tr" and self._row is not None:
-                if self._row:
-                    self.tables[-1].append(self._row)
-                self._row = None
-            elif tag in ("style", "sup"):
-                self._cell_skip = False
+        if tag == "table":
+            if self._wiki:
+                self._wiki.pop()
+            self._depth -= 1
+            return
+        if not self._wiki or not self._wiki[-1]:
+            return
+        if tag in ("td", "th") and self._cell is not None and self._row is not None:
+            self._row.append(" ".join("".join(self._cell).split()))
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            if self._row:
+                self.tables[-1].append(self._row)
+            self._row = None
+        elif tag in ("style", "sup"):
+            self._skip = max(0, self._skip - 1)
 
     def handle_data(self, data):
-        if self._cell is not None and not getattr(self, "_cell_skip", False):
+        if self._cell is not None and not self._skip:
             self._cell.append(data)
 
 
 def darts(cfg, top: int = 16) -> dict:
     r = requests.get("https://en.wikipedia.org/w/api.php", timeout=20,
                      headers={"User-Agent": "SportsNotifier/1.0 (personal dashboard)"},
-                     params={"action": "parse", "page": "PDC_Order_of_Merit", "prop": "text",
+                     params={"action": "parse", "page": "PDC_World_Rankings", "prop": "text",
                              "format": "json", "formatversion": 2, "redirects": 1})
     r.raise_for_status()
     html = r.json()["parse"]["text"]
     parser = _Tables()
     parser.feed(html)
     for table in parser.tables:
-        if not table:
+        # The column headings may sit below a title row ("Players ranked 1 - 32")
+        for hi, header in enumerate(table[:3]):
+            head = [h.lower() for h in header]
+            if any(h.startswith("rank") for h in head) and any("player" in h for h in head):
+                break
+        else:
             continue
-        head = [h.lower() for h in table[0]]
-        try:
-            i_rank = next(i for i, h in enumerate(head) if h.startswith("rank") or h in ("pos", "no."))
-            i_player = next(i for i, h in enumerate(head) if "player" in h)
-            i_money = next(i for i, h in enumerate(head) if "earning" in h or "prize" in h or "money" in h)
-        except StopIteration:
-            continue
+        i_rank = next(i for i, h in enumerate(head) if h.startswith("rank"))
+        i_player = next(i for i, h in enumerate(head) if "player" in h)
+        i_money = next((i for i, h in enumerate(head) if any(w in h for w in ("earning", "prize", "money"))), None)
+        i_change = next((i for i, h in enumerate(head) if "change" in h), None)
         rows = []
-        for row in table[1:]:
-            if len(row) <= max(i_rank, i_player, i_money):
+        for row in table[hi + 1:]:
+            if len(row) <= max(i_rank, i_player):
                 continue
             rank = re.sub(r"\D", "", row[i_rank])
             if not rank:
                 continue
-            rows.append({"pos": int(rank), "name": row[i_player].strip(), "money": row[i_money].strip()})
+            change = row[i_change] if i_change is not None and i_change < len(row) else ""
+            move = ""
+            if change.startswith("+"):
+                move = "▲" + re.sub(r"\D", "", change)
+            elif change.startswith("-"):
+                move = "▼" + re.sub(r"\D", "", change)
+            rows.append({"pos": int(rank), "name": row[i_player].strip(),
+                         "money": row[i_money].strip() if i_money is not None and i_money < len(row) else "",
+                         "move": move})
             if len(rows) >= top:
                 break
         if rows:
             m = re.search(r"as of (\d{1,2} \w+ \d{4})", re.sub(r"<[^>]+>", " ", html))
             return {"players": rows, "as_of": m.group(1) if m else None}
-    raise RuntimeError("Order of Merit table not found")
+    raise RuntimeError("PDC rankings table not found on Wikipedia")
 
 
 def build(cfg) -> dict:
