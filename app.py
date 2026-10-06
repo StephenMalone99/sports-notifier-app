@@ -16,6 +16,7 @@ from notifier.models import Event
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True   # page design changes show on browser refresh
 cfg = load_config()
 TZ = ZoneInfo(cfg.get("timezone", "Europe/Dublin"))
 _lock = threading.Lock()

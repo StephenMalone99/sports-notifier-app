@@ -25,7 +25,7 @@
            border: 1px solid var(--line); background: var(--card); color: var(--text); }
   .filters { display: flex; gap: 8px; margin: 18px 0 6px; flex-wrap: wrap; }
   .chip { border-radius: 999px; padding: 5px 12px; }
-  .chip[aria-pressed="false"] { opacity: .45; }
+  .chip[aria-pressed="true"] { border-color: var(--text); font-weight: 600; }
   .chip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
        margin: 26px 0 8px; }
@@ -68,10 +68,11 @@
   </header>
 
   <div class="filters">
-    <button class="chip" data-sport="liverpool" aria-pressed="true"><span class="dot" style="background:var(--liverpool)"></span>Liverpool</button>
-    <button class="chip" data-sport="cs2" aria-pressed="true"><span class="dot" style="background:var(--cs2)"></span>CS2</button>
-    <button class="chip" data-sport="darts" aria-pressed="true"><span class="dot" style="background:var(--darts)"></span>Darts</button>
-    <button class="chip" data-sport="f1" aria-pressed="true"><span class="dot" style="background:var(--f1)"></span>F1</button>
+    <button class="chip" data-sport="all" aria-pressed="true">All</button>
+    <button class="chip" data-sport="liverpool" aria-pressed="false"><span class="dot" style="background:var(--liverpool)"></span>Liverpool</button>
+    <button class="chip" data-sport="cs2" aria-pressed="false"><span class="dot" style="background:var(--cs2)"></span>CS2</button>
+    <button class="chip" data-sport="darts" aria-pressed="false"><span class="dot" style="background:var(--darts)"></span>Darts</button>
+    <button class="chip" data-sport="f1" aria-pressed="false"><span class="dot" style="background:var(--f1)"></span>F1</button>
   </div>
 
   {% macro card(e) %}
@@ -159,19 +160,19 @@
   }
   tick(); setInterval(tick, 30000);
 
-  // Sport filters (remembered in this browser)
-  let hidden = [];
-  try { hidden = JSON.parse(localStorage.getItem('hiddenSports') || '[]'); } catch (_) {}
+  // Sport filter: click a sport to show only that sport; "All" (or clicking it again) shows everything.
+  let only = 'all';
+  try { only = localStorage.getItem('onlySport') || 'all'; } catch (_) {}
   function apply() {
-    document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', !hidden.includes(c.dataset.sport)));
-    document.querySelectorAll('.card').forEach(c => c.style.display = hidden.includes(c.dataset.sport) ? 'none' : '');
+    document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.sport === only));
+    document.querySelectorAll('.card').forEach(c =>
+      c.style.display = (only === 'all' || c.dataset.sport === only) ? '' : 'none');
     document.querySelectorAll('[data-group]').forEach(g =>
       g.style.display = [...g.querySelectorAll('.card')].some(c => c.style.display !== 'none') ? '' : 'none');
   }
   document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
-    const s = c.dataset.sport;
-    hidden = hidden.includes(s) ? hidden.filter(x => x !== s) : [...hidden, s];
-    try { localStorage.setItem('hiddenSports', JSON.stringify(hidden)); } catch (_) {}
+    only = (c.dataset.sport === only) ? 'all' : c.dataset.sport;
+    try { localStorage.setItem('onlySport', only); } catch (_) {}
     apply();
   }));
   apply();
