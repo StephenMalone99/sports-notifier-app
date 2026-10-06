@@ -4,6 +4,17 @@ timezone: Europe/Dublin        # times on the dashboard and in alerts
 
 cs2:
   tiers: [s]                   # PandaScore tiers to track. Add "a" for more events.
+  always_include:              # tracked whatever tier PandaScore gives them
+    - Major
+    - ESL Pro League
+    - IEM
+    - BLAST
+    - PGL
+    - Esports World Cup
+  exclude:                     # never tracked (smaller side events)
+    - Qualifier
+    - Conference
+    - Academy
 
 liverpool:
   remind_minutes_before: 60    # phone ping this long before kick-off

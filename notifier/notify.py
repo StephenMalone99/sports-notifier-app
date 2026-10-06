@@ -67,7 +67,13 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
     now = now or datetime.now(timezone.utc)
     local = now.astimezone(tz)
     if events is None:
-        events = [Event.from_dict(d) for d in collect(cfg)["events"]]
+        payload = collect(cfg)
+        for name, s in payload["status"].items():
+            print(f"{name:10} {'OK  ' + str(s['count']) + ' events' if s['ok'] else 'FAILED  ' + s['error']}")
+        events = [Event.from_dict(d) for d in payload["events"]]
+        print("Next up:")
+        for e in events[:8]:
+            print(f"  {e.start.astimezone(tz):%a %d %b %H:%M}  [{e.sport}] {e.title}")
     state = _load_state()
     sent = []
 
