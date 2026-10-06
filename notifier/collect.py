@@ -20,7 +20,7 @@ def load_config() -> dict:
     return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
 
-def collect(cfg: dict | None = None) -> dict:
+def collect(cfg: dict | None = None, panels: bool = False) -> dict:
     cfg = cfg or load_config()
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(days=cfg.get("dashboard", {}).get("days_ahead", 60))
@@ -47,6 +47,9 @@ def collect(cfg: dict | None = None) -> dict:
         "status": status,
         "events": [e.to_dict() for e in events],
     }
+    if panels:   # dashboard only: standings and recent form
+        from . import panels as panel_mod
+        payload["panels"] = panel_mod.build(cfg)
     CACHE.parent.mkdir(exist_ok=True)
     CACHE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload

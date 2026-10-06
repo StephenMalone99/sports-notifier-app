@@ -7,7 +7,7 @@ Out of the box it tracks:
 - **CS2:** top-tier events and their matches, with a star on your favourite teams wherever they play.
 - **Liverpool FC:** every fixture, with TV channels and starting line-ups.
 - **Formula 1:** qualifying, sprint and race times.
-- **PDC darts:** the majors and Premier League nights.
+- **PDC darts:** the majors and Premier League nights, with match-ups and times on event days.
 
 ## Features
 
@@ -28,9 +28,10 @@ Alerts run on GitHub Actions every hour, so they work even when your PC is off. 
 |---|---|
 | PandaScore API token (CS2) | [pandascore.co](https://pandascore.co) → sign up → dashboard |
 | football-data.org API token (football) | [football-data.org](https://www.football-data.org/client/register) |
+| SportsAPI Pro key (darts match-ups, optional) | [sportsapipro.com](https://sportsapipro.com) → free plan (100 requests/day) |
 | ntfy topic (your notification channel) | Make up a long, random name, e.g. `sports-x7k2p9q4`. Anyone who knows it can read your alerts. |
 
-F1, darts and the line-up data don't need a key.
+F1, the darts calendar and the line-up data don't need a key.
 
 ### 2. Phone
 
@@ -42,6 +43,7 @@ Install **ntfy** from the App Store or Play Store, tap **+**, and subscribe to y
 2. Go to **Settings → Secrets and variables → Actions** and add three repository secrets:
    - `PANDASCORE_TOKEN`
    - `FOOTBALL_DATA_TOKEN`
+   - `SPORTSAPIPRO_KEY` (optional, for darts match-ups)
    - `NTFY_TOPIC`
 3. Open the **Actions** tab and enable workflows. Forks start with them turned off.
 4. Click **Sports alerts → Run workflow** to test it. After that it runs every hour by itself.
@@ -90,7 +92,9 @@ Sent alerts are remembered in the Actions cache, so nothing is sent twice.
 | Football fixtures and results | [football-data.org](https://www.football-data.org), [TheSportsDB](https://www.thesportsdb.com) | Yes (free) / no |
 | Football line-ups | ESPN public data (unofficial) | No |
 | Formula 1 | [Jolpica F1 API](https://github.com/jolpica/jolpica-f1) | No |
-| Darts | `data/darts.yaml` (kept by hand) | No |
+| Darts calendar | `data/darts.yaml` (kept by hand) | No |
+| Darts match-ups and times | [SportsAPI Pro](https://docs.sportsapipro.com) (only called on event days) | Yes (free) |
+| Darts rankings | Wikipedia (PDC Order of Merit) | No |
 
 Everything stays well within the free-plan limits. The hourly alerts use about half of GitHub's free Actions minutes for private repositories.
 

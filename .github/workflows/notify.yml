@@ -42,6 +42,7 @@ jobs:
           # them as *** if they ever appear in logs.
           PANDASCORE_TOKEN: ${{ secrets.PANDASCORE_TOKEN }}
           FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          SPORTSAPIPRO_KEY: ${{ secrets.SPORTSAPIPRO_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: python -m notifier.notify
 

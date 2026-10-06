@@ -25,7 +25,7 @@ _last_manual = 0.0
 
 def refresh():
     with _lock:
-        collect(cfg)
+        collect(cfg, panels=True)
 
 
 def background():
@@ -93,6 +93,7 @@ def index():
     f1 = f1[: cfg.get("dashboard", {}).get("f1_weekends", 4)]
     updated = datetime.fromisoformat(data["updated"]) if data.get("updated") else None
     return render_template("index.html", groups=groups, yourteams=yourteams, f1=f1,
+                           panels=data.get("panels") or {},
                            status=data.get("status", {}),
                            updated=updated, now=datetime.now(timezone.utc))
 

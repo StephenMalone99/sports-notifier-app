@@ -14,6 +14,7 @@ SERVICE = "NotifierApp"
 KEYS = {
     "PANDASCORE_TOKEN": "PandaScore API token (CS2)",
     "FOOTBALL_DATA_TOKEN": "football-data.org API token (Liverpool)",
+    "SPORTSAPIPRO_KEY": "SportsAPI Pro key (darts match-ups, optional)",
     "NTFY_TOPIC": "ntfy topic name for phone alerts (optional, treat like a password)",
 }
 

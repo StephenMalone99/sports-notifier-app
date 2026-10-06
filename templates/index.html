@@ -8,11 +8,11 @@
 <style>
   :root {
     --bg: #f6f6f4; --card: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0;
-    --cs2: #e8890c; --darts: #1f9d55; --liverpool: #c8102e; --f1: #2563eb;
+    --cs2: #e8890c; --darts: #1f9d55; --liverpool: #c8102e; --f1: #2563eb; --win: #16a34a; --loss: #dc2626;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #141416; --card: #1d1d20; --text: #f1f1f3; --muted: #9a9aa2; --line: #2c2c31;
-            --cs2: #f5a623; --darts: #34c27a; --liverpool: #ff4d5e; --f1: #5b8cff; }
+            --cs2: #f5a623; --darts: #34c27a; --liverpool: #ff4d5e; --f1: #5b8cff; --win: #22c55e; --loss: #f05252; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -23,7 +23,7 @@
   .meta { color: var(--muted); font-size: 13px; }
   button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
            border: 1px solid var(--line); background: var(--card); color: var(--text); }
-  .filters { display: flex; gap: 8px; margin: 18px 0 6px; flex-wrap: wrap; }
+  .filters { display: flex; gap: 8px; margin: 12px 0 6px; flex-wrap: wrap; }
   .chip { border-radius: 999px; padding: 5px 12px; }
   .chip[aria-pressed="true"] { border-color: var(--text); font-weight: 600; }
   .chip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
@@ -42,6 +42,35 @@
   .sub { color: var(--muted); font-size: 13px; }
   .when { text-align: right; font-size: 13px; white-space: nowrap; }
   .fav { color: var(--cs2); }
+  .tabs { display: flex; gap: 4px; margin-top: 18px; border-bottom: 1px solid var(--line); }
+  .tab { border: none; background: none; border-radius: 0; padding: 8px 14px; font-size: 14px;
+         color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab[aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--text); }
+  .view[hidden] { display: none; }
+  .glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 8px; align-items: start; }
+  .card.panel { display: block; padding: 12px 14px; margin: 0; }
+  .panel h3 { font-size: 14px; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+  .panel .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .muted { color: var(--muted); font-weight: 400; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 10px 0 4px; }
+  .pills { display: flex; gap: 4px; flex-wrap: wrap; }
+  .pill { width: 22px; height: 22px; border-radius: 6px; display: inline-grid; place-items: center;
+          font-size: 12px; font-weight: 700; color: #fff; cursor: default; }
+  .pill.W { background: var(--win); } .pill.D { background: var(--muted); } .pill.L { background: var(--loss); }
+  .Wt { color: var(--win); } .Lt { color: var(--loss); } .Dt { color: var(--muted); }
+  .lines { list-style: none; padding: 0; margin: 6px 0 0; font-size: 13px; display: grid; gap: 2px; }
+  .tbl { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .tbl th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; }
+  .tbl td, .tbl th { padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  .tbl td:last-child, .tbl th:last-child { text-align: right; font-weight: 600; }
+  .tbl td:first-child { color: var(--muted); width: 22px; }
+  .tbl tr.me td { color: var(--liverpool); font-weight: 700; }
+  .gaprow td { text-align: center; color: var(--muted); border-bottom: none; padding: 0; }
+  .podium { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+  .podium b { color: var(--f1); }
+  .team { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .team:last-child { border-bottom: none; }
+  .teamname { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
   .extra { margin-top: 2px; }
   .f1h { color: var(--f1); }
   .sessions { margin-top: 6px; font-size: 13px; display: grid; gap: 2px; }
@@ -66,6 +95,11 @@
     </div>
     <form method="post" action="/refresh"><button type="submit">Refresh now</button></form>
   </header>
+
+  <nav class="tabs">
+    <button class="tab" data-view="schedule" aria-selected="true">Schedule</button>
+    <button class="tab" data-view="standings" aria-selected="false">Standings</button>
+  </nav>
 
   <div class="filters">
     <button class="chip" data-sport="all" aria-pressed="true">All</button>
@@ -97,6 +131,101 @@
   {% endmacro %}
 
   {% set ns = namespace(any=false) %}
+
+  <div id="view-standings" class="view" hidden>
+  {% if panels %}
+  <section data-group>
+    <div class="glance">
+
+      {% set p = panels.liverpool %}
+      {% if p %}
+      <div class="card panel" data-sport="liverpool">
+        <h3><span class="dot" style="background:var(--liverpool)"></span>Liverpool</h3>
+        {% if p.error %}<div class="sub">Couldn't load ({{ p.error }})</div>{% else %}
+          <div class="label">Last {{ p.form|length }}</div>
+          <div class="pills">{% for f in p.form %}<span class="pill {{ f.result }}" title="{{ f.score }} vs {{ f.opponent }} ({{ f.venue }}) · {{ f.competition }}">{{ f.result }}</span>{% endfor %}</div>
+          <ul class="lines">
+            {% for f in p.form|reverse %}<li><b class="{{ f.result }}t">{{ f.score }}</b> {{ 'vs' if f.venue == 'H' else 'at' }} {{ f.opponent }}</li>{% endfor %}
+          </ul>
+          {% if p.table %}
+          <div class="label">Premier League{% if p.matchday %} · MD {{ p.matchday }}{% endif %}</div>
+          <table class="tbl">
+            <tr><th></th><th>Team</th><th>P</th><th>GD</th><th>Pts</th></tr>
+            {% for r in p.table %}
+              {% if r.gap %}<tr class="gaprow"><td colspan="5">⋯</td></tr>{% endif %}
+              <tr class="{{ 'me' if r.me }}"><td>{{ r.pos }}</td><td>{{ r.team }}</td><td>{{ r.played }}</td><td>{{ '%+d' % r.gd }}</td><td>{{ r.pts }}</td></tr>
+            {% endfor %}
+          </table>
+          {% endif %}
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% set p = panels.f1 %}
+      {% if p %}
+      <div class="card panel" data-sport="f1">
+        <h3><span class="dot" style="background:var(--f1)"></span>Formula 1{% if p['round'] %} <span class="muted">after round {{ p['round'] }}</span>{% endif %}</h3>
+        {% if p.error %}<div class="sub">Couldn't load ({{ p.error }})</div>{% else %}
+          {% if p.last_race %}
+            <div class="label">{{ p.last_race.name }}</div>
+            <div class="podium">{% for d in p.last_race.podium %}<span><b>{{ loop.index }}</b> {{ d }}</span>{% endfor %}</div>
+          {% endif %}
+          {% if p.drivers %}
+          <div class="label">Drivers</div>
+          <table class="tbl">
+            {% for d in p.drivers %}<tr><td>{{ d.pos }}</td><td>{{ d.name }}<span class="muted"> · {{ d.team }}</span></td><td>{{ d.pts }}</td></tr>{% endfor %}
+          </table>
+          {% endif %}
+          {% if p.constructors %}
+          <div class="label">Constructors</div>
+          <table class="tbl">
+            {% for c in p.constructors %}<tr><td>{{ c.pos }}</td><td>{{ c.name }}</td><td>{{ c.pts }}</td></tr>{% endfor %}
+          </table>
+          {% endif %}
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% set p = panels.cs2 %}
+      {% if p %}
+      <div class="card panel" data-sport="cs2">
+        <h3><span class="dot" style="background:var(--cs2)"></span>Your CS2 teams</h3>
+        {% if p.error %}<div class="sub">Couldn't load ({{ p.error }})</div>{% else %}
+          {% for t in p.teams %}
+            <div class="team">
+              <div class="teamname">{{ t.name }}</div>
+              <div class="pills">{% for r in t.results|reverse %}<span class="pill {{ r.result }}" title="{{ r.score }} vs {{ r.opponent }} · {{ r.event }}">{{ r.result }}</span>{% else %}<span class="muted">No recent matches</span>{% endfor %}</div>
+              {% if t.results %}<div class="sub">Last: <b class="{{ t.results[0].result }}t">{{ t.results[0].score }}</b> vs {{ t.results[0].opponent }}</div>{% endif %}
+            </div>
+          {% endfor %}
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% set p = panels.darts %}
+      {% if p %}
+      <div class="card panel" data-sport="darts">
+        <h3><span class="dot" style="background:var(--darts)"></span>PDC Order of Merit</h3>
+        {% if p.as_of %}<div class="label">As of {{ p.as_of }}</div>{% endif %}
+        {% if p.error %}<div class="sub">Couldn't load ({{ p.error }})</div>{% else %}
+          <table class="tbl">
+            <tr><th></th><th>Player</th><th>Prize money</th></tr>
+            {% for d in p.players %}<tr><td>{{ d.pos }}</td><td>{{ d.name }}</td><td>{{ d.money }}</td></tr>{% endfor %}
+          </table>
+          <div class="sub extra">Source: Wikipedia · two-year prize money</div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    </div>
+  </section>
+  {% endif %}
+  {% if not panels %}<div class="empty">Standings load with the next refresh - press Refresh now.</div>{% endif %}
+  </div>
+
+  <div id="view-schedule" class="view">
+
+
   {% if yourteams %}
     {% set ns.any = true %}
     <section data-group class="yours">
@@ -139,6 +268,8 @@
   {% endfor %}
   {% if not ns.any %}<div class="empty">Nothing coming up yet — press Refresh now, or check the source status below.</div>{% endif %}
 
+  </div>
+
   <div class="status">
     {% for name, s in status.items() %}
       <span class="{{ '' if s.ok else 'bad' }}">{{ name }}: {{ s.count ~ ' events' if s.ok else s.error }}</span>{% if not loop.last %} · {% endif %}
@@ -159,6 +290,17 @@
     });
   }
   tick(); setInterval(tick, 30000);
+
+  // Tabs: Schedule / Standings (remembered in this browser)
+  function showView(v) {
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.view === v));
+    document.querySelectorAll('.view').forEach(el => el.hidden = el.id !== 'view-' + v);
+    try { localStorage.setItem('view', v); } catch (_) {}
+  }
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => showView(t.dataset.view)));
+  let startView = location.hash === '#standings' ? 'standings' : 'schedule';
+  try { startView = location.hash ? startView : (localStorage.getItem('view') || 'schedule'); } catch (_) {}
+  showView(startView);
 
   // Sport filter: click a sport to show only that sport; "All" (or clicking it again) shows everything.
   let only = 'all';

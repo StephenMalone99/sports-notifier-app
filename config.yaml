@@ -34,6 +34,13 @@ liverpool:
     League Cup: Sky Sports
     default: check listings
 
+darts:
+  # Match-ups come from SportsAPI Pro on PDC event days (free plan: 100 requests/day).
+  # Matches are kept when the tournament name matches today's event in data/darts.yaml
+  # or a name below; names in exclude are always skipped.
+  include: []
+  exclude: [modus, challenge tour, development tour, women, youth, wdf, super series]
+
 f1:
   sessions: [Sprint Qualifying, Sprint, Qualifying, Race]   # add Practice 1/2/3 if wanted
   remind: [Qualifying, Sprint, Race]                         # phone ping before these

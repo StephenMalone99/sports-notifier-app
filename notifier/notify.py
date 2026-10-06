@@ -122,13 +122,22 @@ def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | N
             lines.append(f"TV: {_tag(mine[0], 'tv:')}")
         parts.append("\n".join(lines))
 
-    # Darts
-    for e in [e for e in events if e.sport == "darts" and on(e, day)]:
+    # Darts: today's event(s), with the match-ups underneath when available
+    d_matches = [e for e in events if e.sport == "darts" and "match" in e.tags and on(e, day)]
+    for e in [e for e in events if e.sport == "darts" and "match" not in e.tags and on(e, day)]:
         if e.all_day:
-            parts.append(f"DARTS · {e.title} ({_day_of(e, day, tz)})\n"
-                         + (f"{e.detail}\n" if e.detail else "") + "Order of play: pdc.tv")
+            lines = [f"DARTS · {e.title} ({_day_of(e, day, tz)})"] + ([e.detail] if e.detail else [])
         else:
-            parts.append(f"DARTS · {e.title}\n{t(e)} start" + (f" · {e.detail}" if e.detail else ""))
+            lines = [f"DARTS · {e.title}", f"{t(e)} start" + (f" · {e.detail}" if e.detail else "")]
+        if d_matches:
+            for m in d_matches[:max_matches]:
+                lines.append(f"{t(m)}  {m.title}" + (f"  ({m.detail})" if m.detail else ""))
+            if len(d_matches) > max_matches:
+                lines.append(f"…and {len(d_matches) - max_matches} more")
+            d_matches = []                  # list them once, under the first event
+        else:
+            lines.append("Order of play: pdc.tv")
+        parts.append("\n".join(lines))
 
     if not parts:
         return None
