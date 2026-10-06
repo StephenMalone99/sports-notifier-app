@@ -27,6 +27,12 @@ cs2:
 
 liverpool:
   remind_minutes_before: 60    # phone ping this long before kick-off
+  lineups: true                # wait for the starting XIs and include them in the ping
+  tv:                          # where to watch (Ireland, 2026/27). Matched on competition name.
+    Premier League: Sky Sports, TNT Sports or Premier Sports
+    Champions League: Premier Sports (Tue), RTÉ (Wed) or Virgin Media
+    League Cup: Sky Sports
+    default: check listings
 
 notifications:
   daily_digest_hour: 9         # morning summary of today's events (local time)

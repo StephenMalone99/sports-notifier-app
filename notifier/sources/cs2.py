@@ -145,6 +145,17 @@ def _team(o):
     return t.get("name") or t.get("acronym") or "TBD"
 
 
+def _stream_label(url: str) -> str:
+    """'https://www.twitch.tv/eslcs' -> 'twitch.tv/eslcs'."""
+    if not url or "hltv.org" in url:
+        return ""
+    u = url.split("://", 1)[-1].removeprefix("www.").removeprefix("m.")
+    u = u.split("?")[0].rstrip("/")
+    if "youtube.com" in u and "/watch" in u:
+        return "YouTube"
+    return u
+
+
 def _stream(m):
     streams = m.get("streams_list") or []
     for pick in (lambda s: s.get("main"), lambda s: s.get("language") == "en", lambda s: True):
@@ -175,7 +186,9 @@ def _match_event(m, competition: str, favs: dict) -> Event | None:
         competition=competition,
         detail=" · ".join(x for x in [bo, stage, live] if x),
         url=_stream(m),
-        tags=["match", f"serie-{m.get('serie_id')}"] + (["fav"] + [f"team:{t}" for t in mine] if mine else []),
+        tags=["match", f"serie-{m.get('serie_id')}"]
+             + ([f"watch:{_stream_label(_stream(m))}"] if _stream_label(_stream(m)) else [])
+             + (["fav"] + [f"team:{t}" for t in mine] if mine else []),
     )
 
 

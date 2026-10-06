@@ -9,6 +9,7 @@ Already-sent alerts are remembered in state/sent.json so nothing repeats.
 """
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -54,6 +55,10 @@ def push(cfg, title: str, body: str, tags: str = "", click: str = "", priority: 
     return True
 
 
+def _tag(e: Event, prefix: str) -> str:
+    return next((x[len(prefix):] for x in e.tags if x.startswith(prefix)), "")
+
+
 def _day_of(e: Event, day, tz) -> str:
     first = e.start.astimezone(tz).date()
     last = (e.end or e.start).astimezone(tz).date()
@@ -78,13 +83,15 @@ def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | N
     if favs:
         parts.append("YOUR TEAMS\n" + "\n".join(
             f"{t(e)}  {e.title}\n       {e.competition}" + (f" · {e.detail}" if e.detail else "")
+            + (f"\n       Watch: {_tag(e, 'watch:')}" if _tag(e, 'watch:') else "")
             for e in favs))
 
     # Liverpool
     lfc = [e for e in events if e.sport == "liverpool" and on(e, day)]
     if lfc:
         parts.append("LIVERPOOL\n" + "\n".join(
-            f"{t(e)}  {e.title}\n       {e.competition} · {e.detail}" for e in lfc))
+            f"{t(e)}  {e.title}\n       {e.competition} · {e.detail}"
+            + (f"\n       TV: {_tag(e, 'tv:')}" if _tag(e, 'tv:') else "") for e in lfc))
 
     # CS2: each tracked event with today's matches underneath
     tournaments = [e for e in events if e.sport == "cs2" and e.all_day and on(e, day)]
@@ -98,6 +105,9 @@ def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | N
                 lines.append(f"{t(m)}  {star(m)}{m.title}" + (f"  ({m.detail})" if m.detail else ""))
             if len(mine) > max_matches:
                 lines.append(f"…and {len(mine) - max_matches} more")
+            streams = [_tag(m, "watch:") for m in mine if _tag(m, "watch:")]
+            if streams:
+                lines.append("Watch: " + max(set(streams), key=streams.count))
         else:
             lines.append("No matches scheduled today (rest day or not announced yet)")
         parts.append("\n".join(lines))
@@ -145,20 +155,6 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
     state = _load_state()
     sent = []
 
-    # 1) Liverpool kick-off reminders
-    lead = timedelta(minutes=cfg.get("liverpool", {}).get("remind_minutes_before", 60))
-    for e in events:
-        if e.sport != "liverpool":
-            continue
-        key = f"ko-{e.id}"
-        if key not in state and now < e.start <= now + lead + timedelta(minutes=30):
-            mins = int((e.start - now).total_seconds() // 60)
-            if push(cfg, f"Liverpool kick off in {mins} min",
-                    f"{e.title}\n{e.competition} · {e.start.astimezone(tz):%H:%M}\n{e.detail}",
-                    tags="soccer,red_circle", click=e.url, priority="high"):
-                state[key] = now.isoformat()
-                sent.append(key)
-
     # 1b) Favourite CS2 team reminders
     lead = timedelta(minutes=cfg.get("cs2", {}).get("remind_minutes_before", 60))
     for e in events:
@@ -170,7 +166,8 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
             who = " & ".join(x[5:] for x in e.tags if x.startswith("team:")) or "Your team"
             if push(cfg, f"{who} play in {mins} min",
                     f"{e.title}\n{e.competition}" + (f" · {e.detail}" if e.detail else "")
-                    + f"\n{e.start.astimezone(tz):%H:%M} · tap to watch",
+                    + f"\n{e.start.astimezone(tz):%H:%M}"
+                    + (f" · Watch: {_tag(e, 'watch:')}" if _tag(e, 'watch:') else " · tap to watch"),
                     tags="video_game,star", click=e.url, priority="high"):
                 state[key] = now.isoformat()
                 sent.append(key)
@@ -187,6 +184,47 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
         state[digest_key] = now.isoformat()  # mark done even if nothing was on
 
     _save_state(state)
+
+    # 3) Liverpool kick-off reminder (last, because it may wait for line-ups)
+    sent += _liverpool_reminders(cfg, events, state, now, tz)
+    _save_state(state)
+    return sent
+
+
+def _liverpool_reminders(cfg, events, state, now, tz, sleep=None, clock=None) -> list:
+    """Ping before kick-off. If line-ups are on, wait (polling every 5 min) until
+    the starting XIs are out, or until 40 min before kick-off, whichever is first."""
+    lc = cfg.get("liverpool", {})
+    lead = timedelta(minutes=lc.get("remind_minutes_before", 60))
+    clock = clock or (lambda: datetime.now(timezone.utc))
+    sleep = sleep or time.sleep
+    sent = []
+    for e in events:
+        key = f"ko-{e.id}"
+        if e.sport != "liverpool" or key in state:
+            continue
+        # window is wide enough that one hourly run always catches it
+        if not (now < e.start <= now + lead + timedelta(minutes=50)):
+            continue
+        lineup = None
+        if lc.get("lineups", True):
+            from .lineups import fetch_lineup
+            while True:
+                lineup = fetch_lineup(e)
+                left = e.start - clock()
+                if lineup or left <= timedelta(minutes=40):
+                    break
+                print(f"Waiting for line-ups ({int(left.total_seconds() // 60)} min to kick-off)…")
+                sleep(300)
+        mins = max(0, int((e.start - clock()).total_seconds() // 60))
+        tv = _tag(e, "tv:")
+        body = (f"{e.title}\n{e.competition} · {e.start.astimezone(tz):%H:%M}\n{e.detail}"
+                + (f"\nTV: {tv}" if tv else "")
+                + (f"\n\n{lineup}" if lineup else ("\n\nLine-ups not out yet" if lc.get("lineups", True) else "")))
+        title = f"Liverpool kick off in {mins} min" + (" - line-ups in" if lineup else "")
+        if push(cfg, title, body, tags="soccer,red_circle", click=e.url, priority="high"):
+            state[key] = clock().isoformat()
+            sent.append(key)
     return sent
 
 

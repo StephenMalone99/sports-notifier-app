@@ -82,6 +82,16 @@ def _tsdb(cfg) -> list[Event]:
     return events
 
 
+def _tv(competition: str, cfg) -> str:
+    """Likely broadcaster from config.yaml (liverpool.tv), matched on competition name."""
+    table = cfg.get("tv") or {}
+    c = competition.lower()
+    for key, channels in table.items():
+        if key != "default" and key.lower() in c:
+            return channels
+    return table.get("default", "")
+
+
 def fetch(cfg) -> list[Event]:
     events, errors = [], []
     for source in (_fd, _tsdb):
@@ -94,4 +104,8 @@ def fetch(cfg) -> list[Event]:
         events.extend(e for e in got if e.start.date() not in seen_days)
     if not events and errors:
         raise RuntimeError("; ".join(errors))
+    for e in events:
+        tv = _tv(e.competition, cfg)
+        if tv:
+            e.tags.append(f"tv:{tv}")
     return events
