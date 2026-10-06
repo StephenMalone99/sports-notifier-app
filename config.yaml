@@ -20,6 +20,7 @@ cs2:
     NAVI: [Natus Vincere, NaVi]
     FaZe Clan: [FaZe]
     Vitality: [Team Vitality]
+    Team Falcons: [Falcons]
   remind_minutes_before: 60    # ping this long before a favourite team plays
   match_days_ahead: 7          # how far ahead to list matches in tracked events
   favourite_days_ahead: 14     # how far ahead to look for favourite teams' matches
