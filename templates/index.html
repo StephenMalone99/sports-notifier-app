@@ -43,6 +43,11 @@
   .when { text-align: right; font-size: 13px; white-space: nowrap; }
   .fav { color: var(--cs2); }
   .extra { margin-top: 2px; }
+  .f1h { color: var(--f1); }
+  .sessions { margin-top: 6px; font-size: 13px; display: grid; gap: 2px; }
+  .session { color: var(--muted); }
+  .session span { display: inline-block; min-width: 128px; font-variant-numeric: tabular-nums; }
+  .session.next { color: var(--text); font-weight: 600; }
   .yours h2 { color: var(--cs2); }
   .countdown { font-weight: 600; font-variant-numeric: tabular-nums; }
   .empty { color: var(--muted); padding: 30px 0; text-align: center; }
@@ -98,6 +103,32 @@
       {% for e in yourteams %}{{ card(e) }}{% endfor %}
     </section>
   {% endif %}
+  {% if f1 %}
+    {% set ns.any = true %}
+    <section data-group>
+      <h2 class="f1h">Formula 1</h2>
+      {% for w in f1 %}
+      <div class="card f1" data-sport="f1">
+        <div class="bar"></div>
+        <div>
+          <div class="title"><a href="{{ w.first.url }}" target="_blank" rel="noopener">{{ w.name }}</a></div>
+          <div class="sub">{{ w.first.competition }}{% if w.first.detail %} · {{ w.first.detail }}{% endif %}</div>
+          <div class="sessions">
+            {% for x in w.sessions %}
+              <div class="session{% if x.id == w.next.id %} next{% endif %}"><span>{{ x.start|local("%a %d %b, %H:%M") }}</span> {{ x.title.split(' - ')[1] }}</div>
+            {% endfor %}
+          </div>
+          {% for t in w.first.tags if t.startswith('tv:') %}<div class="sub extra">TV: {{ t[3:] }}</div>{% endfor %}
+        </div>
+        <div class="when">
+          <div>Next: {{ w.next.title.split(' - ')[1] }}</div>
+          <div class="countdown" data-start="{{ w.next.start.isoformat() }}" data-end="" data-allday="0"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+  {% endif %}
+
   {% for name, items in groups.items() if items %}
     {% set ns.any = true %}
     <section data-group>

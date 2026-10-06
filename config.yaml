@@ -53,3 +53,4 @@ notifications:
 dashboard:
   refresh_hours: 3             # how often the local page re-fetches data
   days_ahead: 90               # how far ahead to show
+  f1_weekends: 4               # how many upcoming Grand Prix weekends to show
