@@ -61,11 +61,20 @@ def index():
     now_local = datetime.now(TZ)
     order = ["On now", "Today", "Tomorrow", "This week", "Later"]
     groups = {k: [] for k in order}
+    yourteams = []
     for d in data["events"]:
         e = Event.from_dict(d)
-        groups[bucket(e, now_local)].append(e)
+        b = bucket(e, now_local)
+        if "match" in e.tags:
+            if "fav" in e.tags:
+                yourteams.append(e)          # favourites get their own section
+                continue
+            elif b not in ("Today", "Tomorrow", "On now"):
+                continue                     # later CS2 matches: the event card covers them
+        groups[b].append(e)
     updated = datetime.fromisoformat(data["updated"]) if data.get("updated") else None
-    return render_template("index.html", groups=groups, status=data.get("status", {}),
+    return render_template("index.html", groups=groups, yourteams=yourteams,
+                           status=data.get("status", {}),
                            updated=updated, now=datetime.now(timezone.utc))
 
 

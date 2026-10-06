@@ -41,6 +41,8 @@
   .sub { color: var(--muted); font-size: 13px; }
   .when { text-align: right; font-size: 13px; white-space: nowrap; }
   .fav { color: var(--cs2); }
+  .extra { margin-top: 2px; }
+  .yours h2 { color: var(--cs2); }
   .countdown { font-weight: 600; font-variant-numeric: tabular-nums; }
   .empty { color: var(--muted); padding: 30px 0; text-align: center; }
   .status { margin-top: 30px; font-size: 12px; color: var(--muted); }
@@ -53,7 +55,7 @@
   <header>
     <div>
       <h1>Sports Notifier</h1>
-      <div class="meta">CS2 S-tier · PDC darts majors · Liverpool FC
+      <div class="meta">CS2 top tier · PDC darts · Liverpool FC
         {% if updated %} · updated {{ updated|local("%H:%M %d %b") }}{% endif %}</div>
     </div>
     <form method="post" action="/refresh"><button type="submit">Refresh now</button></form>
@@ -65,17 +67,15 @@
     <button class="chip" data-sport="darts" aria-pressed="true"><span class="dot" style="background:var(--darts)"></span>Darts</button>
   </div>
 
-  {% set ns = namespace(any=false) %}
-  {% for name, items in groups.items() if items %}
-    {% set ns.any = true %}
-    <section data-group>
-      <h2>{{ name }}</h2>
-      {% for e in items %}
+  {% macro card(e) %}
       <div class="card {{ e.sport }}" data-sport="{{ e.sport }}">
         <div class="bar"></div>
         <div>
           <div class="title">{% if 'fav' in e.tags %}<span class="fav" title="Your team">★</span> {% endif %}<a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.title }}</a></div>
           <div class="sub">{{ e.competition }}{% if e.detail %} · {{ e.detail }}{% endif %}</div>
+          {% for t in e.tags if t.startswith('watch:') or t.startswith('tv:') %}
+            <div class="sub extra">{{ 'Watch' if t.startswith('watch:') else 'TV' }}: {{ t.split(':', 1)[1] }}</div>
+          {% endfor %}
         </div>
         <div class="when">
           {% if e.all_day %}
@@ -86,7 +86,21 @@
           <div class="countdown" data-start="{{ e.start.isoformat() }}" data-end="{{ e.end.isoformat() if e.end else '' }}" data-allday="{{ 1 if e.all_day else 0 }}"></div>
         </div>
       </div>
-      {% endfor %}
+  {% endmacro %}
+
+  {% set ns = namespace(any=false) %}
+  {% if yourteams %}
+    {% set ns.any = true %}
+    <section data-group class="yours">
+      <h2>★ Your teams</h2>
+      {% for e in yourteams %}{{ card(e) }}{% endfor %}
+    </section>
+  {% endif %}
+  {% for name, items in groups.items() if items %}
+    {% set ns.any = true %}
+    <section data-group>
+      <h2>{{ name }}</h2>
+      {% for e in items %}{{ card(e) }}{% endfor %}
     </section>
   {% endfor %}
   {% if not ns.any %}<div class="empty">Nothing coming up yet — press Refresh now, or check the source status below.</div>{% endif %}
