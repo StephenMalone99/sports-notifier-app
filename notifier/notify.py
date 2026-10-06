@@ -54,11 +54,66 @@ def push(cfg, title: str, body: str, tags: str = "", click: str = "", priority: 
     return True
 
 
-def _line(e: Event, tz) -> str:
-    if e.all_day:
-        end = f" to {e.end.astimezone(tz):%a %d %b}" if e.end else ""
-        return f"{e.title} ({e.start.astimezone(tz):%a %d %b}{end})"
-    return f"{e.start.astimezone(tz):%H:%M} {e.title} ({e.competition})"
+def _day_of(e: Event, day, tz) -> str:
+    first = e.start.astimezone(tz).date()
+    last = (e.end or e.start).astimezone(tz).date()
+    total = (last - first).days + 1
+    return f"day {(day - first).days + 1} of {total}" if total > 1 else "one day"
+
+
+def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | None:
+    """Plain-text morning summary for `day` (a local date), or None if nothing is on."""
+
+    def on(e, d):
+        s = e.start.astimezone(tz).date()
+        f = (e.end or e.start).astimezone(tz).date()
+        return s <= d <= f
+
+    t = lambda e: e.start.astimezone(tz).strftime("%H:%M")
+    parts = []
+
+    # Liverpool
+    lfc = [e for e in events if e.sport == "liverpool" and on(e, day)]
+    if lfc:
+        parts.append("LIVERPOOL\n" + "\n".join(
+            f"{t(e)}  {e.title}\n       {e.competition} · {e.detail}" for e in lfc))
+
+    # CS2: each tracked event with today's matches underneath
+    tournaments = [e for e in events if e.sport == "cs2" and e.all_day and on(e, day)]
+    matches = [e for e in events if e.sport == "cs2" and "match" in e.tags and on(e, day)]
+    for tr in tournaments:
+        serie = next((x for x in tr.tags if x.startswith("serie-")), None)
+        mine = [m for m in matches if serie in m.tags]
+        lines = [f"CS2 · {tr.title} ({_day_of(tr, day, tz)})"]
+        if mine:
+            for m in mine[:max_matches]:
+                lines.append(f"{t(m)}  {m.title}" + (f"  ({m.detail})" if m.detail else ""))
+            if len(mine) > max_matches:
+                lines.append(f"…and {len(mine) - max_matches} more")
+        else:
+            lines.append("No matches scheduled today (rest day or not announced yet)")
+        parts.append("\n".join(lines))
+
+    # Darts
+    for e in [e for e in events if e.sport == "darts" and on(e, day)]:
+        if e.all_day:
+            parts.append(f"DARTS · {e.title} ({_day_of(e, day, tz)})\n"
+                         + (f"{e.detail}\n" if e.detail else "") + "Order of play: pdc.tv")
+        else:
+            parts.append(f"DARTS · {e.title}\n{t(e)} start" + (f" · {e.detail}" if e.detail else ""))
+
+    if not parts:
+        return None
+
+    # Heads-up for tomorrow (event starts / Liverpool / darts nights; not every CS2 match)
+    tomorrow = day + timedelta(days=1)
+    soon = [e for e in events if e.start.astimezone(tz).date() == tomorrow and "match" not in e.tags]
+    if soon:
+        parts.append("TOMORROW\n" + "\n".join(
+            (f"{e.title} starts" if e.all_day else f"{t(e)}  {e.title}") for e in soon))
+
+    body = "\n\n".join(parts)
+    return body if len(body.encode()) < 3900 else body[:3800] + "\n…(see dashboard)"
 
 
 def run(now: datetime | None = None, events: list[Event] | None = None):
@@ -72,7 +127,7 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
             print(f"{name:10} {'OK  ' + str(s['count']) + ' events' if s['ok'] else 'FAILED  ' + s['error']}")
         events = [Event.from_dict(d) for d in payload["events"]]
         print("Next up:")
-        for e in events[:8]:
+        for e in events[:12]:
             print(f"  {e.start.astimezone(tz):%a %d %b %H:%M}  [{e.sport}] {e.title}")
     state = _load_state()
     sent = []
@@ -94,23 +149,11 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
     # 2) Morning digest
     digest_key = f"digest-{local.date().isoformat()}"
     if local.hour >= cfg.get("notifications", {}).get("daily_digest_hour", 9) and digest_key not in state:
-        today, tomorrow = local.date(), local.date() + timedelta(days=1)
-
-        def on(e, day):
-            s = e.start.astimezone(tz).date()
-            f = (e.end or e.start).astimezone(tz).date()
-            return s <= day <= f
-
-        today_events = [e for e in events if on(e, today)]
-        starting_tomorrow = [e for e in events if e.start.astimezone(tz).date() == tomorrow]
-        if today_events or starting_tomorrow:
-            parts = []
-            if today_events:
-                parts.append("TODAY\n" + "\n".join(f"- {_line(e, tz)}" for e in today_events))
-            if starting_tomorrow:
-                parts.append("STARTS TOMORROW\n" + "\n".join(f"- {_line(e, tz)}" for e in starting_tomorrow))
-            tags = ",".join(sorted({ICON[e.sport] for e in today_events + starting_tomorrow}))
-            if push(cfg, f"Sports today - {local:%a %d %b}", "\n\n".join(parts), tags=tags):
+        body = build_digest(events, local.date(), tz)
+        if body:
+            tags = ",".join(sorted({ICON[e.sport] for e in events
+                                    if e.sport.upper() in body.upper()} or {"calendar"}))
+            if push(cfg, f"Sports today - {local:%a %d %b}", body, tags=tags):
                 sent.append(digest_key)
         state[digest_key] = now.isoformat()  # mark done even if nothing was on
 

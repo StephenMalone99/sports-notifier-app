@@ -38,8 +38,13 @@ def _fd(cfg) -> list[Event]:
             title=f"Liverpool vs {opponent}" if lfc_home else f"{opponent} vs Liverpool",
             start=datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00")),
             competition=m["competition"]["name"],
-            detail=("Home · Anfield" if lfc_home else "Away")
-                   + (f" · Matchday {m['matchday']}" if m.get("matchday") else ""),
+            detail=" · ".join(x for x in [
+                "Home" if lfc_home else "Away",
+                m.get("venue") or ("Anfield" if lfc_home else ""),
+                m.get("stage", "").replace("_", " ").title()
+                if m.get("stage") not in (None, "REGULAR_SEASON") else "",
+                f"Matchday {m['matchday']}" if m.get("matchday") else "",
+            ] if x),
             url="https://www.liverpoolfc.com/fixtures",
             tags=["home" if lfc_home else "away"],
         ))

@@ -4,7 +4,7 @@ PandaScore keeps CS2 under the /csgo/ endpoints and tells CS:GO and CS2 apart
 with filter[videogame_title]=cs-2. Tournaments carry a `tier` (s, a, b, c, d).
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -76,6 +76,7 @@ def fetch(cfg) -> list[Event]:
             "name": name, "begin": _dt(t["begin_at"]), "end": _dt(t.get("end_at")),
             "tier": t.get("tier"), "stages": [], "prize": t.get("prizepool"),
             "slug": serie.get("slug") or t.get("slug"),
+            "serie_id": serie.get("id"),
         })
         e["begin"] = min(e["begin"], _dt(t["begin_at"]))
         if t.get("end_at"):
@@ -100,6 +101,70 @@ def fetch(cfg) -> list[Event]:
             detail=" · ".join(x for x in [_prize(e["prize"]), ", ".join(s for s in e["stages"] if s)] if x),
             url="https://www.hltv.org/events",
             all_day=True,
-            tags=[f"tier-{str(e['tier']).lower()}"],
+            tags=[f"tier-{str(e['tier']).lower()}", f"serie-{key}"],
+        ))
+
+    serie_ids = {e["serie_id"]: e["name"] for e in series.values() if e["serie_id"]}
+    if serie_ids:
+        try:
+            events.extend(_matches(headers, serie_ids, cfg))
+        except Exception as exc:  # tournaments still show if match lookup fails
+            log.warning("CS2 match lookup failed: %s", str(exc).split("?")[0][:200])
+    return events
+
+
+def _team(o):
+    t = (o or {}).get("opponent") or {}
+    return t.get("name") or t.get("acronym") or "TBD"
+
+
+def _stream(m):
+    streams = m.get("streams_list") or []
+    for pick in (lambda s: s.get("main"), lambda s: s.get("language") == "en", lambda s: True):
+        for st in streams:
+            if pick(st) and st.get("raw_url"):
+                return st["raw_url"]
+    return "https://www.hltv.org/matches"
+
+
+def _matches(headers, serie_ids: dict, cfg) -> list[Event]:
+    """Individual matches (teams, time, best-of) for the tracked events."""
+    days = cfg.get("match_days_ahead", 7)
+    horizon = datetime.now(timezone.utc) + timedelta(days=days)
+    raw = []
+    for state in ("running", "upcoming"):
+        r = requests.get(
+            f"{BASE}/matches/{state}",
+            headers=headers,
+            params={"filter[serie_id]": ",".join(str(i) for i in serie_ids),
+                    "per_page": 100, "sort": "begin_at"},
+            timeout=20,
+        )
+        r.raise_for_status()
+        raw.extend(r.json())
+
+    events = []
+    for m in raw:
+        when = _dt(m.get("begin_at") or m.get("scheduled_at"))
+        if not when or when > horizon:
+            continue
+        opp = m.get("opponents") or []
+        a = _team(opp[0]) if len(opp) > 0 else "TBD"
+        b = _team(opp[1]) if len(opp) > 1 else "TBD"
+        stage = (m.get("tournament") or {}).get("name", "")
+        bo = f"BO{m['number_of_games']}" if m.get("number_of_games") else ""
+        live = ""
+        if m.get("status") == "running" and m.get("results"):
+            score = [str(r.get("score", 0)) for r in m["results"]]
+            live = f"LIVE {'-'.join(score)}"
+        events.append(Event(
+            id=f"cs2m-{m['id']}",
+            sport="cs2",
+            title=f"{a} vs {b}",
+            start=when,
+            competition=serie_ids.get(m.get("serie_id"), "CS2"),
+            detail=" · ".join(x for x in [bo, stage, live] if x),
+            url=_stream(m),
+            tags=["match", f"serie-{m.get('serie_id')}"],
         ))
     return events

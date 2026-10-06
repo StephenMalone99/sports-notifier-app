@@ -38,11 +38,13 @@
   venue: Milton Keynes
   tv: ITV
 
-- name: Premier League Darts (Thursday nights)
+- name: Premier League Darts
   type: Premier League
-  start: 2027-02-04
-  end: 2027-05-27
-  venue: Opening night Glasgow · Finals at The O2, London
+  start: 2027-02-04        # first Thursday
+  end: 2027-05-27          # finals night
+  weekly: true             # one entry per Thursday night
+  time: "19:00"            # UK time
+  # venues change weekly (Night 1 Glasgow, finals at The O2) - see pdc.tv
   tv: Sky Sports
 
 - name: UK Open
