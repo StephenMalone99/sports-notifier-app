@@ -223,7 +223,9 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
         if rc.get("liverpool", True):
             jobs.append(("liverpool", lambda: results.liverpool(cfg, now)))
         if rc.get("cs2_favourites", True):
-            jobs.append(("cs2", lambda: results.cs2(cfg, now, _fav_aliases(cfg.get("cs2", {})))))
+            watch = _cs2_watch(events, state, now)
+            jobs.append(("cs2", lambda: results.cs2(cfg, now, _fav_aliases(cfg.get("cs2", {})),
+                                                    watch_ids=watch)))
         if rc.get("f1", True):
             jobs.append(("f1", lambda: results.f1(cfg, now)))
         if rc.get("darts", True):
@@ -295,6 +297,21 @@ def _liverpool_reminders(cfg, events, state, now, tz, sleep=None, clock=None) ->
             state[key] = clock().isoformat()
             sent.append(key)
     return sent
+
+
+def _cs2_watch(events, state, now) -> list[str]:
+    """PandaScore ids of favourite matches that have started but whose result
+    hasn't been sent: from this run's events, plus anything we reminded about
+    in the last day (a finished match drops out of the upcoming list)."""
+    ids = []
+    for e in events:
+        if "fav" in e.tags and e.id.startswith("cs2m-") and e.start <= now:
+            ids.append(e.id[5:])
+    cutoff = (now - timedelta(hours=24)).isoformat()
+    for k, v in state.items():
+        if k.startswith("fav-cs2m-") and v >= cutoff:
+            ids.append(k[9:])
+    return [i for i in dict.fromkeys(ids) if f"res-cs2-{i}" not in state]
 
 
 def _watched(cfg, e: Event) -> bool:

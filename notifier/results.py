@@ -84,63 +84,96 @@ def liverpool(cfg, now, window_hours=12) -> list:
 
 
 # ---------- CS2 favourite teams ----------
-def cs2(cfg, now, favs: dict, window_hours=6) -> list:
+def _cs2_alert(m, favs):
+    """(key, title, body, tags, url) for a finished match involving a favourite, else None."""
+    if m.get("status") != "finished":
+        return None
+    teams = [((o or {}).get("opponent") or {}) for o in (m.get("opponents") or [])]
+    if len(teams) != 2:
+        return None
+
+    def fav_name(t):
+        for x in (t.get("name"), t.get("acronym")):
+            if x and x.lower() in favs:
+                return favs[x.lower()]
+        return None
+
+    mine = [fav_name(t) for t in teams]
+    if not any(mine):
+        return None
+    score = {r_.get("team_id"): r_.get("score", 0) for r_ in (m.get("results") or [])}
+    a, b = teams
+    sa, sb = score.get(a.get("id"), 0), score.get(b.get("id"), 0)
+    winner_id = m.get("winner_id") or (m.get("winner") or {}).get("id")
+    disp = [mine[0] or a.get("name", "?"), mine[1] or b.get("name", "?")]
+    if winner_id == a.get("id"):
+        title = f"{disp[0]} beat {disp[1]} {sa}-{sb}"
+    elif winner_id == b.get("id"):
+        title = f"{disp[1]} beat {disp[0]} {sb}-{sa}"
+    else:
+        title = f"{disp[0]} {sa}-{sb} {disp[1]}"
+    league = (m.get("league") or {}).get("name", "")
+    serie = (m.get("serie") or {}).get("full_name", "")
+    stage = (m.get("tournament") or {}).get("name", "")
+    return (
+        f"res-cs2-{m['id']}",
+        title,
+        " · ".join(x for x in [f"{league} {serie}".strip(), stage] if x),
+        "video_game,trophy",
+        "https://www.hltv.org/results",
+    )
+
+
+def cs2(cfg, now, favs: dict, window_hours=6, watch_ids=()) -> list:
+    """Favourite-team results.
+
+    1) Every favourite match we reminded about (watch_ids) is looked up by id
+       until PandaScore marks it finished - delayed matches are often marked
+       finished late and drop out of the 'recent results' list.
+    2) The recent results list catches anything else.
+    """
     token = get_secret("PANDASCORE_TOKEN")
     if not token or not favs:
         return []
-    # Ask by START time: some past matches have no end time and would crowd out
-    # real results if we sorted by end time.
+    headers = {"Authorization": f"Bearer {token}"}
+    out, seen = [], set()
+
+    for mid in list(dict.fromkeys(watch_ids))[:20]:
+        try:
+            r = requests.get(f"https://api.pandascore.co/csgo/matches/{mid}", headers=headers, timeout=20)
+            r.raise_for_status()
+            m = r.json()
+        except Exception as exc:
+            log.info("CS2 match %s lookup failed: %s", mid, str(exc).split("?")[0][:100])
+            continue
+        names = " vs ".join(((o or {}).get("opponent") or {}).get("name", "?") for o in m.get("opponents") or [])
+        log.info("CS2 watched match %s (%s): %s", mid, names, m.get("status"))
+        alert = _cs2_alert(m, favs)
+        if alert:
+            out.append(alert)
+            seen.add(alert[0])
+
     since = now - timedelta(hours=window_hours)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
     r = requests.get(
         "https://api.pandascore.co/csgo/matches/past",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=headers,
         params={"filter[videogame_title]": "cs-2", "sort": "-begin_at", "per_page": 100,
                 "range[begin_at]": f"{(since - timedelta(hours=6)).strftime(fmt)},{now.strftime(fmt)}"},
         timeout=20,
     )
     r.raise_for_status()
     past = r.json()
-    out = []
     for m in past:
         end = _dt(m.get("end_at")) or _dt(m.get("modified_at")) or _dt(m.get("begin_at"))
-        if m.get("status") != "finished" or not end or end < since:
+        if not end or end < since:
             continue
-        teams = [((o or {}).get("opponent") or {}) for o in (m.get("opponents") or [])]
-        if len(teams) != 2:
-            continue
-
-        def fav_name(t):
-            for x in (t.get("name"), t.get("acronym")):
-                if x and x.lower() in favs:
-                    return favs[x.lower()]
-            return None
-
-        mine = [fav_name(t) for t in teams]
-        if not any(mine):
-            continue
-        score = {r_.get("team_id"): r_.get("score", 0) for r_ in (m.get("results") or [])}
-        a, b = teams
-        sa, sb = score.get(a.get("id"), 0), score.get(b.get("id"), 0)
-        winner_id = m.get("winner_id") or (m.get("winner") or {}).get("id")
-        disp = [mine[0] or a.get("name", "?"), mine[1] or b.get("name", "?")]
-        if winner_id == a.get("id"):
-            title = f"{disp[0]} beat {disp[1]} {sa}-{sb}"
-        elif winner_id == b.get("id"):
-            title = f"{disp[1]} beat {disp[0]} {sb}-{sa}"
-        else:
-            title = f"{disp[0]} {sa}-{sb} {disp[1]}"
-        league = (m.get("league") or {}).get("name", "")
-        serie = (m.get("serie") or {}).get("full_name", "")
-        stage = (m.get("tournament") or {}).get("name", "")
-        out.append((
-            f"res-cs2-{m['id']}",
-            title,
-            " · ".join(x for x in [f"{league} {serie}".strip(), stage] if x),
-            "video_game,trophy",
-            "https://www.hltv.org/results",
-        ))
-    log.info("CS2 results: %d recent matches checked, %d favourite-team results", len(past), len(out))
+        alert = _cs2_alert(m, favs)
+        if alert and alert[0] not in seen:
+            out.append(alert)
+            seen.add(alert[0])
+    log.info("CS2 results: %d watched, %d recent matches checked, %d favourite-team results",
+             len(watch_ids), len(past), len(out))
     return out
 
 
