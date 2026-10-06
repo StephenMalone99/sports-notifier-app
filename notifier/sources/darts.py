@@ -133,7 +133,9 @@ def _matches(cfg, active: list[Event], today) -> list[Event]:
             competition=(t.get("uniqueTournament") or {}).get("name") or t.get("name") or "PDC",
             detail=" · ".join(x for x in [rnd, score] if x),
             url="https://www.pdc.tv/",
-            tags=["match"] + (["finished"] if status == "finished" else []),
+            tags=["match", f"sap:{ev.get('id')}", f"round:{rnd}"]
+                 + (["finished", f"score:{(ev.get('homeScore') or {}).get('display')}-"
+                                 f"{(ev.get('awayScore') or {}).get('display')}"] if status == "finished" else []),
         ))
     return out
 

@@ -1,13 +1,15 @@
-"""Starting line-ups for Liverpool matches, from ESPN's public (unofficial) data.
+"""Starting line-ups for Liverpool matches.
 
-No key needed. Line-ups usually appear 60-75 minutes before kick-off.
-This is an unofficial source, so every failure is caught and the kick-off
-reminder simply goes out without line-ups.
+1st choice: SportsAPI Pro (official data; needs SPORTSAPIPRO_KEY; a few requests
+            per match day). Line-ups appear once confirmed, ~30-60 min before kick-off.
+Fallback:   ESPN's public (unofficial) data, no key.
+Every failure is caught; the kick-off reminder still goes out without line-ups.
 """
 import logging
 
 import requests
 
+from .keystore import get_secret
 from .models import Event
 
 log = logging.getLogger("notifier")
@@ -59,7 +61,7 @@ def _xi(roster: dict) -> tuple[str, list[str]]:
     return roster.get("formation") or "", names
 
 
-def fetch_lineup(match: Event) -> str | None:
+def _espn_lineup(match: Event) -> str | None:
     """Plain-text line-ups for both teams, or None if not announced / unavailable."""
     try:
         found = _find_event_id(match)
@@ -89,3 +91,74 @@ def fetch_lineup(match: Event) -> str | None:
     except Exception as exc:
         log.warning("Line-ups lookup failed: %s", str(exc).split("?")[0][:200])
         return None
+
+
+# ---------------- SportsAPI Pro (official) ----------------
+SAP = "https://api.sportsapipro.com/v2/football/api"
+_sap_match: dict[str, int] = {}          # our event id -> SportsAPI Pro match id (per run)
+
+
+def _sap_get(key, path):
+    r = requests.get(f"{SAP}{path}", headers={"x-api-key": key}, timeout=15)
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    j = r.json()
+    return j.get("data", j) if isinstance(j, dict) else j
+
+
+def _sap_find_match(key, match: Event, team_id: int) -> int | None:
+    if match.id in _sap_match:
+        return _sap_match[match.id]
+    data = _sap_get(key, f"/teams/{team_id}/near-events") or {}
+    if not data:   # id not recognised: look Liverpool up once and log the right id
+        found = _sap_get(key, "/search?q=liverpool") or {}
+        results = found.get("results", found) if isinstance(found, dict) else found
+        for item in results if isinstance(results, list) else []:
+            ent = item.get("entity", item)
+            if (ent.get("name") or "").lower() == "liverpool" and "football" in str(ent.get("sport", "football")).lower():
+                log.info("SportsAPI Pro: Liverpool team id is %s (set liverpool.sportsapipro_team_id)", ent.get("id"))
+                data = _sap_get(key, f"/teams/{ent.get('id')}/near-events") or {}
+                break
+    for ev in (data.get("nextEvent"), data.get("previousEvent")):
+        if ev and ev.get("startTimestamp") and abs(ev["startTimestamp"] - match.start.timestamp()) < 3 * 3600:
+            _sap_match[match.id] = ev["id"]
+            return ev["id"]
+    return None
+
+
+def _sap_lineup(match: Event, team_id: int) -> str | None:
+    key = get_secret("SPORTSAPIPRO_KEY")
+    if not key:
+        return None
+    mid = _sap_find_match(key, match, team_id)
+    if not mid:
+        log.info("Line-ups (SportsAPI Pro): match not found")
+        return None
+    data = _sap_get(key, f"/match/{mid}/lineups")
+    if not data or not data.get("confirmed"):
+        log.info("Line-ups (SportsAPI Pro): not confirmed yet")
+        return None
+    sides = []
+    home_name, away_name = (match.title.split(" vs ") + ["", ""])[:2]
+    for side, name in (("home", home_name), ("away", away_name)):
+        t = data.get(side) or {}
+        xi = [((p.get("player") or {}).get("shortName") or (p.get("player") or {}).get("name") or "?")
+              for p in t.get("players", []) if not p.get("substitute")]
+        if len(xi) >= 11:
+            sides.append((name or side.title(), t.get("formation") or "", xi[:11]))
+    if len(sides) < 2:
+        return None
+    sides.sort(key=lambda x: 0 if "liverpool" in x[0].lower() else 1)
+    return "\n\n".join(f"{n.upper()}" + (f" ({f})" if f else "") + "\n" + ", ".join(xi) for n, f, xi in sides)
+
+
+def fetch_lineup(match: Event, team_id: int = 44) -> str | None:
+    """Plain-text line-ups for both teams, or None if not announced / unavailable."""
+    try:
+        got = _sap_lineup(match, team_id)
+        if got:
+            return got
+    except Exception as exc:
+        log.warning("Line-ups (SportsAPI Pro) failed: %s", str(exc).split("?")[0][:150])
+    return _espn_lineup(match)

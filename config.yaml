@@ -28,6 +28,7 @@ cs2:
 liverpool:
   remind_minutes_before: 60    # phone ping this long before kick-off
   lineups: true                # wait for the starting XIs and include them in the ping
+  sportsapipro_team_id: 44     # Liverpool's id on SportsAPI Pro (for official line-ups)
   tv:                          # where to watch (Ireland, 2026/27). Matched on competition name.
     Premier League: Sky Sports, TNT Sports or Premier Sports
     Champions League: Premier Sports (Tue), RTÉ (Wed) or Virgin Media
@@ -40,6 +41,15 @@ darts:
   # or a name below; names in exclude are always skipped.
   include: []
   exclude: [modus, challenge tour, development tour, women, youth, wdf, super series]
+  stats: true                  # add averages, 180s and checkout % to darts results
+  results_players:             # darts results for these players (plus every semi-final and final)
+    - Luke Littler
+    - Luke Humphries
+    - Michael van Gerwen
+    - Gian van Veen
+    - Gerwyn Price
+    - Stephen Bunting
+    - Josh Rock
 
 f1:
   sessions: [Sprint Qualifying, Sprint, Qualifying, Race]   # add Practice 1/2/3 if wanted
@@ -52,6 +62,7 @@ results:                       # score alerts after games - set enabled: false f
   liverpool: true
   cs2_favourites: true
   f1: true                     # podium after the sprint and race
+  darts: true                  # darts results (see darts.results_players)
 
 notifications:
   daily_digest_hour: 9         # morning summary of today's events (local time)

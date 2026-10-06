@@ -222,6 +222,8 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
             jobs.append(("cs2", lambda: results.cs2(cfg, now, _fav_aliases(cfg.get("cs2", {})))))
         if rc.get("f1", True):
             jobs.append(("f1", lambda: results.f1(cfg, now)))
+        if rc.get("darts", True):
+            jobs.append(("darts", lambda: results.darts(cfg, now, events)))
         for name, job in jobs:
             try:
                 for key, title, body, tags, click in job():
@@ -273,7 +275,7 @@ def _liverpool_reminders(cfg, events, state, now, tz, sleep=None, clock=None) ->
         if lc.get("lineups", True):
             from .lineups import fetch_lineup
             while True:
-                lineup = fetch_lineup(e)
+                lineup = fetch_lineup(e, lc.get("sportsapipro_team_id", 44))
                 left = e.start - clock()
                 if lineup or left <= timedelta(minutes=40):
                     break

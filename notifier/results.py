@@ -169,3 +169,74 @@ def f1(cfg, now, window_hours=36) -> list:
             race.get("url") or "https://www.formula1.com/en/results",
         ))
     return out
+
+
+# ---------- Darts (with match stats from SportsAPI Pro) ----------
+STAT_KEYS = [  # (label, words that identify the stat in the API's statistic names)
+    ("Avg", ("average",)),
+    ("180s", ("180",)),
+    ("CO%", ("checkout", "%")),
+    ("High CO", ("highest checkout",)),
+]
+
+
+def _darts_stats(key: str, match_id: str) -> str:
+    r = requests.get(f"https://api.sportsapipro.com/v2/darts/api/match/{match_id}/statistics",
+                     headers={"x-api-key": key}, timeout=20)
+    if r.status_code != 200:
+        return ""
+    data = r.json()
+    data = data.get("data", data) if isinstance(data, dict) else data
+    items = []
+
+    def walk(x):   # collect every {name, home, away} item, whatever the nesting
+        if isinstance(x, dict):
+            if "name" in x and "home" in x and "away" in x:
+                items.append(x)
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    walk(data)
+    out = []
+    for label, words in STAT_KEYS:
+        for it in items:
+            name = str(it["name"]).lower()
+            if all(w in name for w in words) and not (label == "CO%" and "highest" in name) \
+                    and not (label == "Avg" and "first" in name):
+                out.append(f"{label} {it['home']} v {it['away']}")
+                break
+    return " · ".join(out)
+
+
+def darts(cfg, now, events, window_hours=6) -> list:
+    """Finished darts matches involving your chosen players (or any final/semi-final)."""
+    key = get_secret("SPORTSAPIPRO_KEY")
+    dc = cfg.get("darts", {})
+    players = [p.lower() for p in dc.get("results_players", [])]
+    out = []
+    for e in events:
+        if e.sport != "darts" or "finished" not in e.tags or e.start < now - timedelta(hours=window_hours):
+            continue
+        rnd = next((t[6:] for t in e.tags if t.startswith("round:")), "")
+        big_round = any(w in rnd.lower() for w in ("final", "semi"))
+        if not big_round and players and not any(p.split()[-1] in e.title.lower() for p in players):
+            continue
+        score = next((t[6:] for t in e.tags if t.startswith("score:")), "")
+        home, away = (e.title.split(" vs ") + ["", ""])[:2]
+        mid = next((t[4:] for t in e.tags if t.startswith("sap:")), "")
+        stats = ""
+        if key and mid and dc.get("stats", True):
+            try:
+                stats = _darts_stats(key, mid)
+            except Exception as exc:
+                log.info("darts stats skipped: %s", str(exc)[:100])
+        out.append((
+            f"res-darts-{mid or e.id}",
+            f"{home} {score.replace('-', '-')} {away}",
+            "\n".join(x for x in [" · ".join(x for x in [e.competition, rnd] if x), stats] if x),
+            "dart,trophy",
+            e.url,
+        ))
+    return out
