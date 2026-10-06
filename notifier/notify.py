@@ -50,9 +50,17 @@ def push(cfg, title: str, body: str, tags: str = "", click: str = "", priority: 
         headers["Tags"] = tags
     if click:
         headers["Click"] = click
-    r = requests.post(f"{server}/{topic}", data=body.encode("utf-8"), headers=headers, timeout=20)
-    r.raise_for_status()
-    return True
+    for attempt in range(3):   # ntfy.sh occasionally drops a connection - retry before giving up
+        try:
+            r = requests.post(f"{server}/{topic}", data=body.encode("utf-8"), headers=headers, timeout=20)
+            r.raise_for_status()
+            return True
+        except requests.RequestException as exc:
+            log.warning("ntfy send failed (try %d/3) for %r: %s", attempt + 1, title,
+                        type(exc).__name__)
+            if attempt < 2:
+                time.sleep(10)
+    return False   # not marked as sent, so the next run tries again
 
 
 def _tag(e: Event, prefix: str) -> str:

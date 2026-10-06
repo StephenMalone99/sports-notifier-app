@@ -138,20 +138,29 @@ def cs2(cfg, now, favs: dict, window_hours=6, watch_ids=()) -> list:
     headers = {"Authorization": f"Bearer {token}"}
     out, seen = [], set()
 
-    for mid in list(dict.fromkeys(watch_ids))[:20]:
+    ids = list(dict.fromkeys(watch_ids))[:50]
+    if ids:
+        # The free plan can't fetch /matches/{id}, but the past list filtered by id works
         try:
-            r = requests.get(f"https://api.pandascore.co/csgo/matches/{mid}", headers=headers, timeout=20)
+            r = requests.get("https://api.pandascore.co/csgo/matches/past", headers=headers, timeout=20,
+                             params={"filter[id]": ",".join(ids), "per_page": 100})
             r.raise_for_status()
-            m = r.json()
+            found = {str(m["id"]): m for m in r.json()}
         except Exception as exc:
-            log.info("CS2 match %s lookup failed: %s", mid, str(exc).split("?")[0][:100])
-            continue
-        names = " vs ".join(((o or {}).get("opponent") or {}).get("name", "?") for o in m.get("opponents") or [])
-        log.info("CS2 watched match %s (%s): %s", mid, names, m.get("status"))
-        alert = _cs2_alert(m, favs)
-        if alert:
-            out.append(alert)
-            seen.add(alert[0])
+            log.info("CS2 watched-match lookup failed: %s", str(exc).split("?")[0][:100])
+            found = {}
+        for mid in ids:
+            m = found.get(mid)
+            if not m:
+                log.info("CS2 watched match %s: not finished yet", mid)
+                continue
+            names = " vs ".join(((o or {}).get("opponent") or {}).get("name", "?")
+                                for o in m.get("opponents") or [])
+            log.info("CS2 watched match %s (%s): %s", mid, names, m.get("status"))
+            alert = _cs2_alert(m, favs)
+            if alert:
+                out.append(alert)
+                seen.add(alert[0])
 
     since = now - timedelta(hours=window_hours)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
