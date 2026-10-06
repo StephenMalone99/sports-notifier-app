@@ -70,7 +70,15 @@ def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | N
         return s <= d <= f
 
     t = lambda e: e.start.astimezone(tz).strftime("%H:%M")
+    star = lambda e: "★ " if "fav" in e.tags else ""
     parts = []
+
+    # Your CS2 teams (any event)
+    favs = [e for e in events if "fav" in e.tags and "match" in e.tags and on(e, day)]
+    if favs:
+        parts.append("YOUR TEAMS\n" + "\n".join(
+            f"{t(e)}  {e.title}\n       {e.competition}" + (f" · {e.detail}" if e.detail else "")
+            for e in favs))
 
     # Liverpool
     lfc = [e for e in events if e.sport == "liverpool" and on(e, day)]
@@ -87,7 +95,7 @@ def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | N
         lines = [f"CS2 · {tr.title} ({_day_of(tr, day, tz)})"]
         if mine:
             for m in mine[:max_matches]:
-                lines.append(f"{t(m)}  {m.title}" + (f"  ({m.detail})" if m.detail else ""))
+                lines.append(f"{t(m)}  {star(m)}{m.title}" + (f"  ({m.detail})" if m.detail else ""))
             if len(mine) > max_matches:
                 lines.append(f"…and {len(mine) - max_matches} more")
         else:
@@ -107,10 +115,11 @@ def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | N
 
     # Heads-up for tomorrow (event starts / Liverpool / darts nights; not every CS2 match)
     tomorrow = day + timedelta(days=1)
-    soon = [e for e in events if e.start.astimezone(tz).date() == tomorrow and "match" not in e.tags]
+    soon = [e for e in events if e.start.astimezone(tz).date() == tomorrow
+            and ("match" not in e.tags or "fav" in e.tags)]
     if soon:
         parts.append("TOMORROW\n" + "\n".join(
-            (f"{e.title} starts" if e.all_day else f"{t(e)}  {e.title}") for e in soon))
+            (f"{e.title} starts" if e.all_day else f"{t(e)}  {star(e)}{e.title}") for e in soon))
 
     body = "\n\n".join(parts)
     return body if len(body.encode()) < 3900 else body[:3800] + "\n…(see dashboard)"
@@ -128,7 +137,11 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
         events = [Event.from_dict(d) for d in payload["events"]]
         print("Next up:")
         for e in events[:12]:
-            print(f"  {e.start.astimezone(tz):%a %d %b %H:%M}  [{e.sport}] {e.title}")
+            print(f"  {e.start.astimezone(tz):%a %d %b %H:%M}  [{e.sport}] {'★ ' if 'fav' in e.tags else ''}{e.title}")
+        favs = [e for e in events if "fav" in e.tags and "match" in e.tags]
+        print(f"Favourite-team matches: {len(favs)}")
+        for e in favs[:8]:
+            print(f"  {e.start.astimezone(tz):%a %d %b %H:%M}  {e.title}  ({e.competition})")
     state = _load_state()
     sent = []
 
@@ -143,6 +156,22 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
             if push(cfg, f"Liverpool kick off in {mins} min",
                     f"{e.title}\n{e.competition} · {e.start.astimezone(tz):%H:%M}\n{e.detail}",
                     tags="soccer,red_circle", click=e.url, priority="high"):
+                state[key] = now.isoformat()
+                sent.append(key)
+
+    # 1b) Favourite CS2 team reminders
+    lead = timedelta(minutes=cfg.get("cs2", {}).get("remind_minutes_before", 60))
+    for e in events:
+        if not ("fav" in e.tags and "match" in e.tags):
+            continue
+        key = f"fav-{e.id}"
+        if key not in state and now < e.start <= now + lead + timedelta(minutes=30):
+            mins = int((e.start - now).total_seconds() // 60)
+            who = " & ".join(x[5:] for x in e.tags if x.startswith("team:")) or "Your team"
+            if push(cfg, f"{who} play in {mins} min",
+                    f"{e.title}\n{e.competition}" + (f" · {e.detail}" if e.detail else "")
+                    + f"\n{e.start.astimezone(tz):%H:%M} · tap to watch",
+                    tags="video_game,star", click=e.url, priority="high"):
                 state[key] = now.isoformat()
                 sent.append(key)
 
