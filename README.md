@@ -1,54 +1,158 @@
 # Sports Notifier
 
-Tracks **CS2 S-tier tournaments**, **PDC darts majors** and **Liverpool FC fixtures**.
+A personal app that keeps track of the sport I follow and sends alerts to my phone:
 
-- **Dashboard** on your PC: `start_dashboard.bat` → http://127.0.0.1:8000
-- **Phone alerts** from GitHub Actions every hour, even when your PC is off: a morning digest of what's on today and a ping 60 minutes before Liverpool kick-off.
+- **CS2:** top-tier tournaments, every match in them, and my favourite teams' matches at any event.
+- **Liverpool FC:** every fixture, with likely TV channels and starting line-ups before kick-off.
+- **PDC darts:** the majors and Premier League nights, where the big names play.
 
-## Keeping the API keys safe
+It has two parts:
 
-Keys are never written into this folder, so they can't end up in OneDrive or GitHub.
+1. **Phone alerts**, which run on GitHub every hour, even when my PC is off.
+2. **A dashboard** on my PC that lists everything coming up.
 
-| Where it runs | Where the keys live |
+---
+
+## What it does
+
+### Phone alerts (via the ntfy app)
+
+| Alert | When | Example |
+|---|---|---|
+| **Morning summary** | Once a day, just after 9am, on days something is on | "Your teams" matches, Liverpool kick-off and TV, CS2 events with today's matches and streams, darts sessions, and what's coming tomorrow |
+| **Favourite team reminder** | About an hour before Spirit, NAVI, FaZe, Vitality or Falcons play | `Team Spirit play in 50 min · Spirit vs 1WIN · ESL Pro League · BO3 · Watch: twitch.tv/eslcs` |
+| **Liverpool kick-off** | About an hour before kick-off. It waits for the line-ups if they aren't out yet. | `Liverpool kick off in 55 min - line-ups in · TV: Sky Sports… · both starting XIs` |
+
+Each alert is sent only once. Tapping a notification opens the stream or the fixture page.
+
+### Dashboard (http://127.0.0.1:8000)
+
+- **★ Your teams:** upcoming matches for your favourite teams.
+- **On now / Today / Tomorrow / This week / Later:** everything else, grouped by date.
+- A filter button for each sport, live countdowns, and a Refresh now button.
+- It only works on this PC; other devices on the network can't open it.
+
+---
+
+## How it works
+
+```
+                ┌──────────────┐   PandaScore (CS2)
+ GitHub Actions │  notifier/   │   football-data.org + TheSportsDB (Liverpool)
+ every hour ───►│  collect.py  │◄─ ESPN (line-ups, match days only)
+                │  notify.py   │   data/darts.yaml (darts, kept by hand)
+                └──────┬───────┘
+                       │ push
+                       ▼
+                 ntfy.sh ──► ntfy app on phone
+
+ start_dashboard.bat ──► app.py (Flask) ──► same collect.py ──► browser
+```
+
+- `collect.py` fetches all sources and merges them into one list of events.
+- `notify.py` decides what's due and sends it to ntfy. It records what it has sent in the GitHub Actions cache (`state/sent.json`) so nothing repeats.
+- On Liverpool match days, the job keeps checking every 5 minutes until the line-ups are published, or until 40 minutes before kick-off.
+
+---
+
+## Data sources
+
+| Sport | Source | Notes |
+|---|---|---|
+| CS2 | [PandaScore](https://pandascore.co) API (free plan) | Tournaments, matches and streams. PandaScore's tier labels aren't always right, so events named in `always_include` are always tracked. |
+| Liverpool | [football-data.org](https://www.football-data.org) (free plan) | Premier League and Champions League fixtures |
+| Liverpool | [TheSportsDB](https://www.thesportsdb.com) (public key) | Cup games that football-data doesn't cover |
+| Liverpool | ESPN public API (unofficial) | Starting line-ups. If it fails, the alert is still sent without them. |
+| Liverpool TV | `config.yaml` | Rule-based per competition (Ireland, 2026/27). There's no free listings source for the exact channel. |
+| Darts | `data/darts.yaml` | Curated from the PDC calendar. Needs updating about once a year. |
+
+**Free plan limits:** everything stays well under the limits.
+
+- PandaScore: about 1% of the 1,000 requests/hour.
+- football-data: 1 request per check.
+- GitHub Actions: about 1,000 of the 2,000 free minutes a month (private repository).
+
+---
+
+## Project layout
+
+```
+NotifierApp/
+├── .github/workflows/notify.yml   Hourly GitHub job
+├── notifier/
+│   ├── collect.py                 Fetches and merges all sources
+│   ├── notify.py                  Builds and sends the alerts
+│   ├── lineups.py                 Liverpool line-ups (ESPN)
+│   ├── keystore.py / set_keys.py  Secure key storage
+│   ├── models.py                  Event format shared by everything
+│   └── sources/                   cs2.py · liverpool.py · darts.py
+├── templates/index.html           Dashboard page
+├── app.py                         Dashboard server
+├── config.yaml                    All settings (no secrets)
+├── data/darts.yaml                Darts calendar
+├── set_keys.bat                   Saves API keys on this PC
+└── start_dashboard.bat            Starts the dashboard
+```
+
+---
+
+## Customising (`config.yaml`)
+
+| Setting | What it does |
 |---|---|
-| Your PC | Windows Credential Manager, encrypted with your Windows login. Saved with `set_keys.bat` (typing is hidden). |
-| GitHub Actions | Repository **Secrets**, encrypted by GitHub, write-only once saved and shown as `***` in logs. |
+| `cs2.favourite_teams` | Your teams, plus any other names PandaScore uses for them, e.g. `Team Falcons: [Falcons]` |
+| `cs2.always_include` / `exclude` | Event names that are always / never tracked |
+| `cs2.remind_minutes_before` | How long before a favourite team's match to send the reminder |
+| `liverpool.tv` | TV channels for each competition |
+| `liverpool.lineups` | `true` waits for the line-ups and includes them; `false` sends the reminder straight away |
+| `notifications.daily_digest_hour` | Hour the morning summary is sent |
+| `timezone` | Timezone used for alert and dashboard times |
 
-Other safeguards:
-- The repo should be **private**. `.gitignore` blocks `.env`, key files, cached data and alert state.
-- The dashboard only listens on `127.0.0.1`, so other devices on your network can't open it.
-- The workflow has read-only permissions and doesn't keep GitHub credentials after checkout.
-- Error messages never print keys or request URLs.
-- **Don't paste keys into chats, screenshots, issues or code.** If one leaks, regenerate it on the provider's site and save the new one with `set_keys.bat` and in GitHub Secrets.
-- Turn on two-factor authentication for GitHub, PandaScore and football-data.org.
-- Your ntfy topic name works like a password, because anyone who knows it can read your alerts. Use the random one `set_keys.bat` suggests.
+To change darts events, edit `data/darts.yaml`. Check it against [pdc.tv/calendar](https://www.pdc.tv/calendar/) when the new season is announced.
+
+After editing, **commit and push in GitHub Desktop** so the phone alerts use the new settings. The dashboard picks changes up the next time you start it.
+
+---
 
 ## Setup
 
-### 1. On your PC
-1. Install **Python 3.12** from https://www.python.org/downloads/ and tick "Add python.exe to PATH".
-2. Double-click **`set_keys.bat`**. Paste each key (it stays hidden) and accept the suggested ntfy topic. Write the topic down; you'll need it in steps 2 and 3.
-3. Double-click **`start_dashboard.bat`**. The first run takes a minute while it installs.
+### Keys and security
 
-### 2. Phone
-Install the **ntfy** app (Android/iOS), tap **+**, and subscribe to your topic on `ntfy.sh`.
+API keys are never stored in this folder, OneDrive or the code.
 
-### 3. GitHub (alerts while your PC is off)
-1. Create a **private** repository, e.g. `sports-notifier`.
-2. Upload this folder with GitHub Desktop (*File → Add local repository*, then *Publish*, keeping "private" ticked). `.gitignore` keeps local data out.
-3. In the repo, open **Settings → Secrets and variables → Actions → New repository secret** and add:
-   - `PANDASCORE_TOKEN`
-   - `FOOTBALL_DATA_TOKEN`
-   - `NTFY_TOPIC`
-4. Open **Actions → Sports alerts → Run workflow** to test it. After that it runs every hour.
+- **On this PC:** keys are saved in Windows Credential Manager by `set_keys.bat`.
+- **On GitHub:** keys are repository secrets (**Settings → Secrets and variables → Actions**). Logs show them as `***`.
 
-Free-plan usage: about 730 Action minutes a month, well inside GitHub's 2,000 free minutes for private repos.
+The three keys are `PANDASCORE_TOKEN`, `FOOTBALL_DATA_TOKEN` and `NTFY_TOPIC`. The ntfy topic works like a password: anyone who knows it can read your alerts.
 
-## Customising
-- `config.yaml`: CS2 tiers (add `a` for more events), reminder timing, digest hour, timezone.
-- `data/darts.yaml`: darts dates. Check them against https://www.pdc.tv/calendar/ each year.
+If a key leaks, generate a new one on the provider's site and update it in both places.
 
-## Data sources
-- CS2: PandaScore API (free plan). HLTV has no official API.
-- Liverpool: football-data.org (Premier League + Champions League) and TheSportsDB (cup games).
-- Darts: curated list of PDC majors and Premier League dates.
+### Phone
+
+1. Install **ntfy** (by Philipp C. Heckel) from the Play Store or App Store.
+2. Subscribe to your topic on `ntfy.sh`.
+
+### Dashboard
+
+1. Install **Python 3.14** from [python.org](https://www.python.org/downloads/windows/) and tick "Add python.exe to PATH".
+2. Run `set_keys.bat` once to save your keys.
+3. Run `start_dashboard.bat` whenever you want the dashboard. Close the black window to stop it.
+
+### GitHub (phone alerts)
+
+- The code is in the private repository **StephenMalone99/sports-notifier-app** and is pushed with GitHub Desktop.
+- The workflow runs every hour by itself.
+- To run it by hand: **Actions → Sports alerts → Run workflow**.
+
+---
+
+## Troubleshooting
+
+| Problem | What to check |
+|---|---|
+| No alerts | Open the latest run under **Actions**. In the "Fetch events and send alerts" step, each source should show `OK`. |
+| Want to resend today's summary for testing | **Actions → Caches**, delete the newest `sent-…` entry, then run the workflow. |
+| A CS2 event is missing | The run log lists every event it skipped and why. Add the event's name to `always_include`. |
+| A favourite team isn't picked up | Check the name PandaScore uses in the log and add it as an alias. |
+| The Liverpool alert has no line-ups | Look in the log for lines starting with `Line-ups`. The ESPN source is unofficial and may have changed. |
+| The dashboard won't start | Make sure Python is installed with PATH ticked, then delete `%LOCALAPPDATA%\NotifierApp\venv` and run the `.bat` again. |
