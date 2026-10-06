@@ -148,7 +148,7 @@ def cs2(cfg, per_team: int = 4) -> dict:
 
     r = requests.get("https://api.pandascore.co/csgo/matches/past", headers=headers, timeout=20,
                      params={"filter[opponent_id]": ",".join(str(i) for i in ids),
-                             "sort": "-end_at", "per_page": 100})
+                             "sort": "-begin_at", "per_page": 100})
     r.raise_for_status()
     results = {d: [] for d in favs}
     for m in r.json():

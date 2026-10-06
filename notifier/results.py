@@ -88,17 +88,22 @@ def cs2(cfg, now, favs: dict, window_hours=6) -> list:
     token = get_secret("PANDASCORE_TOKEN")
     if not token or not favs:
         return []
+    # Ask by START time: some past matches have no end time and would crowd out
+    # real results if we sorted by end time.
+    since = now - timedelta(hours=window_hours)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
     r = requests.get(
         "https://api.pandascore.co/csgo/matches/past",
         headers={"Authorization": f"Bearer {token}"},
-        params={"filter[videogame_title]": "cs-2", "sort": "-end_at", "per_page": 100},
+        params={"filter[videogame_title]": "cs-2", "sort": "-begin_at", "per_page": 100,
+                "range[begin_at]": f"{(since - timedelta(hours=6)).strftime(fmt)},{now.strftime(fmt)}"},
         timeout=20,
     )
     r.raise_for_status()
-    since = now - timedelta(hours=window_hours)
+    past = r.json()
     out = []
-    for m in r.json():
-        end = _dt(m.get("end_at"))
+    for m in past:
+        end = _dt(m.get("end_at")) or _dt(m.get("modified_at")) or _dt(m.get("begin_at"))
         if m.get("status") != "finished" or not end or end < since:
             continue
         teams = [((o or {}).get("opponent") or {}) for o in (m.get("opponents") or [])]
@@ -135,6 +140,7 @@ def cs2(cfg, now, favs: dict, window_hours=6) -> list:
             "video_game,trophy",
             "https://www.hltv.org/results",
         ))
+    log.info("CS2 results: %d recent matches checked, %d favourite-team results", len(past), len(out))
     return out
 
 
