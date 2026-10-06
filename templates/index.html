@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="600">
+<title>Sports Notifier</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0;
+    --cs2: #e8890c; --darts: #1f9d55; --liverpool: #c8102e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141416; --card: #1d1d20; --text: #f1f1f3; --muted: #9a9aa2; --line: #2c2c31;
+            --cs2: #f5a623; --darts: #34c27a; --liverpool: #ff4d5e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 60px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; }
+  .meta { color: var(--muted); font-size: 13px; }
+  button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+           border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  .filters { display: flex; gap: 8px; margin: 18px 0 6px; flex-wrap: wrap; }
+  .chip { border-radius: 999px; padding: 5px 12px; }
+  .chip[aria-pressed="false"] { opacity: .45; }
+  .chip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+       margin: 26px 0 8px; }
+  .card { display: grid; grid-template-columns: 4px 1fr auto; gap: 14px; align-items: center;
+          background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 12px 14px 12px 0; margin-bottom: 8px; overflow: hidden; }
+  .bar { align-self: stretch; }
+  .cs2 .bar { background: var(--cs2); } .darts .bar { background: var(--darts); }
+  .liverpool .bar { background: var(--liverpool); }
+  .title { font-weight: 600; }
+  .title a { color: inherit; text-decoration: none; }
+  .title a:hover { text-decoration: underline; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .when { text-align: right; font-size: 13px; white-space: nowrap; }
+  .countdown { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+  .status { margin-top: 30px; font-size: 12px; color: var(--muted); }
+  .bad { color: var(--liverpool); }
+  @media (max-width: 520px) { .card { grid-template-columns: 4px 1fr; } .when { text-align: left; grid-column: 2; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Sports Notifier</h1>
+      <div class="meta">CS2 S-tier · PDC darts majors · Liverpool FC
+        {% if updated %} · updated {{ updated|local("%H:%M %d %b") }}{% endif %}</div>
+    </div>
+    <form method="post" action="/refresh"><button type="submit">Refresh now</button></form>
+  </header>
+
+  <div class="filters">
+    <button class="chip" data-sport="liverpool" aria-pressed="true"><span class="dot" style="background:var(--liverpool)"></span>Liverpool</button>
+    <button class="chip" data-sport="cs2" aria-pressed="true"><span class="dot" style="background:var(--cs2)"></span>CS2</button>
+    <button class="chip" data-sport="darts" aria-pressed="true"><span class="dot" style="background:var(--darts)"></span>Darts</button>
+  </div>
+
+  {% set ns = namespace(any=false) %}
+  {% for name, items in groups.items() if items %}
+    {% set ns.any = true %}
+    <section data-group>
+      <h2>{{ name }}</h2>
+      {% for e in items %}
+      <div class="card {{ e.sport }}" data-sport="{{ e.sport }}">
+        <div class="bar"></div>
+        <div>
+          <div class="title"><a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.title }}</a></div>
+          <div class="sub">{{ e.competition }}{% if e.detail %} · {{ e.detail }}{% endif %}</div>
+        </div>
+        <div class="when">
+          {% if e.all_day %}
+            <div>{{ e.start|local("%a %d %b") }}{% if e.end and e.end.date() != e.start.date() %} – {{ e.end|local("%a %d %b") }}{% endif %}</div>
+          {% else %}
+            <div>{{ e.start|local }}</div>
+          {% endif %}
+          <div class="countdown" data-start="{{ e.start.isoformat() }}" data-end="{{ e.end.isoformat() if e.end else '' }}" data-allday="{{ 1 if e.all_day else 0 }}"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+  {% endfor %}
+  {% if not ns.any %}<div class="empty">Nothing coming up yet — press Refresh now, or check the source status below.</div>{% endif %}
+
+  <div class="status">
+    {% for name, s in status.items() %}
+      <span class="{{ '' if s.ok else 'bad' }}">{{ name }}: {{ s.count ~ ' events' if s.ok else s.error }}</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+</main>
+<script>
+  // Countdowns
+  function tick() {
+    const now = Date.now();
+    document.querySelectorAll('.countdown').forEach(el => {
+      const s = new Date(el.dataset.start).getTime();
+      const e = el.dataset.end ? new Date(el.dataset.end).getTime() : s + 2 * 3600e3;
+      if (now >= s && now <= e) { el.textContent = 'On now'; return; }
+      let ms = s - now; if (ms < 0) { el.textContent = ''; return; }
+      const d = Math.floor(ms / 864e5), h = Math.floor(ms % 864e5 / 36e5), m = Math.floor(ms % 36e5 / 6e4);
+      el.textContent = 'in ' + (d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m + 'm');
+    });
+  }
+  tick(); setInterval(tick, 30000);
+
+  // Sport filters (remembered in this browser)
+  let hidden = [];
+  try { hidden = JSON.parse(localStorage.getItem('hiddenSports') || '[]'); } catch (_) {}
+  function apply() {
+    document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', !hidden.includes(c.dataset.sport)));
+    document.querySelectorAll('.card').forEach(c => c.style.display = hidden.includes(c.dataset.sport) ? 'none' : '');
+    document.querySelectorAll('[data-group]').forEach(g =>
+      g.style.display = [...g.querySelectorAll('.card')].some(c => c.style.display !== 'none') ? '' : 'none');
+  }
+  document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+    const s = c.dataset.sport;
+    hidden = hidden.includes(s) ? hidden.filter(x => x !== s) : [...hidden, s];
+    try { localStorage.setItem('hiddenSports', JSON.stringify(hidden)); } catch (_) {}
+    apply();
+  }));
+  apply();
+</script>
+</body>
+</html>

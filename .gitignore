@@ -1,0 +1,13 @@
+# Never commit secrets or local data
+.env
+.env.*
+*.key
+secrets.*
+data/events.json
+state/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

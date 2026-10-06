@@ -1,0 +1,52 @@
+name: Sports alerts
+
+on:
+  schedule:
+    - cron: "7 * * * *"      # every hour at :07 (GitHub may run it a few minutes late)
+  workflow_dispatch:          # lets you run it by hand from the Actions tab
+
+# Least privilege: this job can only read the code, nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: sports-alerts
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Remembers which alerts were already sent, so nothing repeats.
+      - uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: sent-${{ github.run_id }}
+          restore-keys: sent-
+
+      - name: Fetch events and send alerts
+        env:
+          # Pulled from Settings > Secrets and variables > Actions. GitHub masks
+          # them as *** if they ever appear in logs.
+          PANDASCORE_TOKEN: ${{ secrets.PANDASCORE_TOKEN }}
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python -m notifier.notify
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: state
+          key: sent-${{ github.run_id }}

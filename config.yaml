@@ -1,0 +1,17 @@
+# Settings (no secrets in here — keys live in Windows Credential Manager / GitHub Secrets)
+
+timezone: Europe/Dublin        # times on the dashboard and in alerts
+
+cs2:
+  tiers: [s]                   # PandaScore tiers to track. Add "a" for more events.
+
+liverpool:
+  remind_minutes_before: 60    # phone ping this long before kick-off
+
+notifications:
+  daily_digest_hour: 9         # morning summary of today's events (local time)
+  ntfy_server: https://ntfy.sh
+
+dashboard:
+  refresh_hours: 3             # how often the local page re-fetches data
+  days_ahead: 90               # how far ahead to show

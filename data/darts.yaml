@@ -1,0 +1,109 @@
+# PDC events where the top players compete (majors + Premier League).
+# Dates checked 6 Oct 2026 against the PDC calendar coverage on dartscorner.co.uk
+# and dartsworld.com. Re-check https://www.pdc.tv/calendar/ when the PDC
+# publishes changes. Format: start/end as YYYY-MM-DD.
+
+- name: European Championship
+  type: Major
+  start: 2026-10-22
+  end: 2026-10-25
+  venue: Dortmund
+  tv: ITV
+
+- name: Grand Slam of Darts
+  type: Major
+  start: 2026-11-14
+  end: 2026-11-22
+  venue: Wolverhampton
+  tv: Sky Sports
+
+- name: Players Championship Finals
+  type: Major
+  start: 2026-11-27
+  end: 2026-11-29
+  venue: Minehead
+  tv: ITV
+
+- name: PDC World Darts Championship
+  type: Major
+  start: 2026-12-11
+  end: 2027-01-03
+  venue: Alexandra Palace, London
+  tv: Sky Sports
+
+- name: World Masters
+  type: Major
+  start: 2027-01-27
+  end: 2027-01-31
+  venue: Milton Keynes
+  tv: ITV
+
+- name: Premier League Darts (Thursday nights)
+  type: Premier League
+  start: 2027-02-04
+  end: 2027-05-27
+  venue: Opening night Glasgow · Finals at The O2, London
+  tv: Sky Sports
+
+- name: UK Open
+  type: Major
+  start: 2027-03-05
+  end: 2027-03-07
+  venue: Minehead
+  tv: ITV
+
+- name: World Cup of Darts
+  type: Major
+  start: 2027-06-10
+  end: 2027-06-13
+  venue: Frankfurt
+  tv: Sky Sports
+
+- name: European Open
+  type: Major
+  start: 2027-06-18
+  end: 2027-06-20
+  venue: Salzburg
+
+- name: World Matchplay
+  type: Major
+  start: 2027-07-17
+  end: 2027-07-25
+  venue: Blackpool
+  tv: Sky Sports
+
+- name: World Series of Darts Finals
+  type: Major
+  start: 2027-09-16
+  end: 2027-09-20
+  tv: ITV
+
+- name: World Grand Prix
+  type: Major
+  start: 2027-09-27
+  end: 2027-10-03
+  venue: Leicester
+  tv: Sky Sports
+
+- name: European Championship
+  type: Major
+  start: 2027-10-26
+  end: 2027-10-31
+  venue: Dortmund
+  tv: ITV
+
+- name: Grand Slam of Darts
+  type: Major
+  start: 2027-11-06
+  end: 2027-11-14
+  venue: Wolverhampton
+  tv: Sky Sports
+
+- name: Players Championship Finals
+  type: Major
+  start: 2027-11-26
+  end: 2027-11-28
+  venue: Minehead
+  tv: ITV
+
+# 2027/28 World Championship: add once the PDC confirms the December dates.
