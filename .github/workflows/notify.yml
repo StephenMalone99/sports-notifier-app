@@ -1,9 +1,12 @@
 name: Sports alerts
 
 on:
+  # Main trigger: an external timer (cron-job.org) starts this every 10 minutes
+  # through GitHub's API - those runs start within seconds.
+  workflow_dispatch:          # also lets you run it by hand from the Actions tab
+  # Backup only: GitHub's own timer is often late and sometimes skips runs.
   schedule:
-    - cron: "7 * * * *"      # every hour at :07 (GitHub may run it a few minutes late)
-  workflow_dispatch:          # lets you run it by hand from the Actions tab
+    - cron: "37 * * * *"
 
 # Least privilege: this job can only read the code, nothing else.
 permissions:
@@ -16,7 +19,7 @@ concurrency:
 jobs:
   notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # only long on Liverpool match days (waits for line-ups)
+    timeout-minutes: 10   # every run is a quick check (about 1 minute)
     steps:
       - uses: actions/checkout@v5
         with:

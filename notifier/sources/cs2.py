@@ -188,7 +188,8 @@ def _match_event(m, competition: str, favs: dict) -> Event | None:
         url=_stream(m),
         tags=["match", f"serie-{m.get('serie_id')}"]
              + ([f"watch:{_stream_label(_stream(m))}"] if _stream_label(_stream(m)) else [])
-             + (["fav"] + [f"team:{t}" for t in mine] if mine else []),
+             + (["fav"] + [f"team:{t}" for t in mine] if mine else [])
+             + (["live"] if m.get("status") == "running" else []),
     )
 
 

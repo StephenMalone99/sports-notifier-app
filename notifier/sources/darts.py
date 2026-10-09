@@ -6,6 +6,7 @@ that calendar is on, the free SportsAPI Pro plan (100 requests/day) is asked
 for that day's schedule, so you see who plays who and when. On other days no
 API calls are made.
 """
+import json
 import logging
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -146,8 +147,26 @@ def fetch(cfg) -> list[Event]:
     active = _active_today(calendar, today)
     if not active:
         return calendar                    # no PDC event today: no API calls
+    # Runs are every 10 min but SportsAPI Pro's free plan is 100 requests/day,
+    # so match-ups are re-fetched at most every `refresh_minutes` and cached.
+    cache = Path(__file__).resolve().parents[2] / "state" / "darts_matches.json"
+    every = timedelta(minutes=cfg.get("refresh_minutes", 30))
     try:
-        return calendar + _matches(cfg, active, today)
+        saved = json.loads(cache.read_text(encoding="utf-8"))
+        if saved.get("day") == today.isoformat() and \
+                datetime.now(timezone.utc) - datetime.fromisoformat(saved["at"]) < every:
+            return calendar + [Event.from_dict(d) for d in saved["events"]]
+    except (FileNotFoundError, ValueError, KeyError):
+        pass
+    try:
+        matches = _matches(cfg, active, today)
     except Exception as exc:               # match-ups are a bonus; keep the calendar
         log.warning("darts match-ups failed: %s", str(exc).split("?")[0][:150])
         return calendar
+    try:
+        cache.parent.mkdir(exist_ok=True)
+        cache.write_text(json.dumps({"day": today.isoformat(), "at": datetime.now(timezone.utc).isoformat(),
+                                     "events": [e.to_dict() for e in matches]}), encoding="utf-8")
+    except OSError:
+        pass
+    return calendar + matches

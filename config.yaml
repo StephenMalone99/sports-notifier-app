@@ -22,6 +22,8 @@ cs2:
     Vitality: [Team Vitality]
     Team Falcons: [Falcons]
   remind_minutes_before: 60    # ping this long before a favourite team plays
+  live_alerts: true            # "Live now" / "Running late" pings for favourite-team matches
+  late_after_minutes: 10       # say "running late" once a match is this far past its start time
   match_days_ahead: 7          # how far ahead to list matches in tracked events
   favourite_days_ahead: 14     # how far ahead to look for favourite teams' matches
 
@@ -41,6 +43,7 @@ darts:
   # or a name below; names in exclude are always skipped.
   include: []
   exclude: [modus, challenge tour, development tour, women, youth, wdf, super series]
+  refresh_minutes: 30          # how often to re-fetch match-ups on event days (saves API requests)
   stats: true                  # add averages, 180s and checkout % to darts results
   results_players:             # darts results for these players (plus every semi-final and final)
     - Luke Littler
@@ -65,7 +68,8 @@ results:                       # score alerts after games - set enabled: false f
   darts: true                  # darts results (see darts.results_players)
 
 notifications:
-  daily_digest_hour: 9         # morning summary of today's events (local time)
+  daily_digest_time: "07:30"   # morning summary of today's events (local time)
+  max_gap_minutes: 35          # warn if no check has run for this long (timer problem)
   time_changes: true           # ping when your matches/sessions are delayed, moved or postponed
   time_change_minutes: 15      # ignore smaller shifts
   ntfy_server: https://ntfy.sh

@@ -1,7 +1,8 @@
-"""Phone alerts via ntfy. Designed to run every hour (GitHub Actions or your PC).
+"""Phone alerts via ntfy. Designed to run every 10 minutes (GitHub Actions or your PC).
+Every run is a quick check - nothing waits inside a run, so runs never queue.
 
 Sends:
-  * a morning digest (once a day, from `daily_digest_hour`) of today's events
+  * a morning digest (once a day, at `daily_digest_time`) of today's events
     and tournaments starting tomorrow
   * a reminder before each Liverpool kick-off
 
@@ -23,6 +24,7 @@ from .models import Event
 STATE = ROOT / "state" / "sent.json"
 ICON = {"cs2": "video_game", "darts": "dart", "liverpool": "soccer", "f1": "checkered_flag"}
 log = logging.getLogger("notifier")
+SLACK = timedelta(minutes=5)   # reminders go out lead..lead+5 min before (runs are every 10 min)
 
 
 def _load_state() -> dict:
@@ -34,7 +36,7 @@ def _load_state() -> dict:
 
 def _save_state(state: dict):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
-    state = {k: v for k, v in state.items() if v >= cutoff}
+    state = {k: v for k, v in state.items() if v.split("|")[-1] >= cutoff}
     STATE.parent.mkdir(exist_ok=True)
     STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
@@ -61,6 +63,13 @@ def push(cfg, title: str, body: str, tags: str = "", click: str = "", priority: 
             if attempt < 2:
                 time.sleep(10)
     return False   # not marked as sent, so the next run tries again
+
+
+def _digest_time(cfg) -> tuple[int, int]:
+    nc = cfg.get("notifications", {})
+    t = str(nc.get("daily_digest_time") or f"{nc.get('daily_digest_hour', 9)}:00")
+    h, _, m = t.partition(":")
+    return int(h), int(m or 0)
 
 
 def _tag(e: Event, prefix: str) -> str:
@@ -183,6 +192,7 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
             print(f"  {e.start.astimezone(tz):%a %d %b %H:%M}  {e.title}  ({e.competition})")
     state = _load_state()
     sent = []
+    sent += _timing(cfg, state, now, local)
 
     # 1a) Time changes and postponements (before reminders, so a moved match
     #     gets a fresh reminder for its new time)
@@ -194,7 +204,7 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
         if not ("fav" in e.tags and "match" in e.tags):
             continue
         key = f"fav-{e.id}"
-        if key not in state and now < e.start <= now + lead + timedelta(minutes=30):
+        if key not in state and now < e.start <= now + lead + SLACK:
             mins = int((e.start - now).total_seconds() // 60)
             who = " & ".join(x[5:] for x in e.tags if x.startswith("team:")) or "Your team"
             if push(cfg, f"{who} play in {mins} min",
@@ -213,7 +223,7 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
         if e.sport != "f1" or _tag(e, "session:") not in remind:
             continue
         key = f"f1-{e.id}"
-        if key not in state and now < e.start <= now + lead + timedelta(minutes=30):
+        if key not in state and now < e.start <= now + lead + SLACK:
             mins = int((e.start - now).total_seconds() // 60)
             if push(cfg, f"F1 {_tag(e, 'session:')} in {mins} min",
                     f"{e.title.split(' - ')[0]}\n{e.detail}\n{e.start.astimezone(tz):%H:%M}"
@@ -253,7 +263,7 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
 
     # 2) Morning digest
     digest_key = f"digest-{local.date().isoformat()}"
-    if local.hour >= cfg.get("notifications", {}).get("daily_digest_hour", 9) and digest_key not in state:
+    if (local.hour, local.minute) >= _digest_time(cfg) and digest_key not in state:
         body = build_digest(events, local.date(), tz)
         if body:
             tags = ",".join(sorted({ICON[e.sport] for e in events
@@ -264,45 +274,98 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
 
     _save_state(state)
 
-    # 3) Liverpool kick-off reminder (last, because it may wait for line-ups)
+    # 2b) Favourite CS2 matches around start time: running late / live now
+    try:
+        sent += _cs2_live_watch(cfg, events, state, now, tz)
+    except Exception as exc:
+        log.warning("CS2 live watch failed: %s", str(exc).split("?")[0][:150])
+    _save_state(state)
+
+    # 3) Liverpool kick-off reminder (sent once the line-ups are out)
     sent += _liverpool_reminders(cfg, events, state, now, tz)
     _save_state(state)
     return sent
 
 
-def _liverpool_reminders(cfg, events, state, now, tz, sleep=None, clock=None) -> list:
-    """Ping before kick-off. If line-ups are on, wait (polling every 5 min) until
-    the starting XIs are out, or until 40 min before kick-off, whichever is first."""
+def _liverpool_reminders(cfg, events, state, now, tz) -> list:
+    """Ping before kick-off. With line-ups on, each run (every 10 min) checks for
+    the starting XIs from ~75 min before kick-off and sends the reminder as soon
+    as they're out - or at 40 min before kick-off without them."""
     lc = cfg.get("liverpool", {})
     lead = timedelta(minutes=lc.get("remind_minutes_before", 60))
-    clock = clock or (lambda: datetime.now(timezone.utc))
-    sleep = sleep or time.sleep
+    want_lineups = lc.get("lineups", True)
     sent = []
     for e in events:
         key = f"ko-{e.id}"
-        if e.sport != "liverpool" or key in state:
+        if e.sport != "liverpool" or key in state or "postponed" in e.tags:
             continue
-        # window is wide enough that one hourly run always catches it
-        if not (now < e.start <= now + lead + timedelta(minutes=50)):
+        left = e.start - now
+        if not (timedelta(0) < left <= lead + timedelta(minutes=15)):
             continue
         lineup = None
-        if lc.get("lineups", True):
+        if want_lineups:
             from .lineups import fetch_lineup
-            while True:
+            try:
                 lineup = fetch_lineup(e, lc.get("sportsapipro_team_id", 44))
-                left = e.start - clock()
-                if lineup or left <= timedelta(minutes=40):
-                    break
-                print(f"Waiting for line-ups ({int(left.total_seconds() // 60)} min to kick-off)…")
-                sleep(300)
-        mins = max(0, int((e.start - clock()).total_seconds() // 60))
+            except Exception as exc:
+                log.info("line-ups check failed: %s", str(exc).split("?")[0][:120])
+            if not lineup and left > timedelta(minutes=40):
+                print(f"Line-ups not out yet ({int(left.total_seconds() // 60)} min to kick-off) - will check next run")
+                continue
+        mins = max(0, int(left.total_seconds() // 60))
         tv = _tag(e, "tv:")
         body = (f"{e.title}\n{e.competition} · {e.start.astimezone(tz):%H:%M}\n{e.detail}"
                 + (f"\nTV: {tv}" if tv else "")
-                + (f"\n\n{lineup}" if lineup else ("\n\nLine-ups not out yet" if lc.get("lineups", True) else "")))
+                + (f"\n\n{lineup}" if lineup else ("\n\nLine-ups not out yet" if want_lineups else "")))
         title = f"Liverpool kick off in {mins} min" + (" - line-ups in" if lineup else "")
         if push(cfg, title, body, tags="soccer,red_circle", click=e.url, priority="high"):
-            state[key] = clock().isoformat()
+            state[key] = now.isoformat()
+            sent.append(key)
+    return sent
+
+
+def _cs2_live_watch(cfg, events, state, now, tz) -> list:
+    """Favourite CS2 matches around start time, checked once per run (no waiting):
+      * 'Live now' when PandaScore shows it running
+      * 'Running late' once it's late_after_minutes past its time and not started,
+        then 'Still not started' every 30 min (up to 3 more), so repeated
+        delays keep you posted. New start times come from _changes ('Delayed')."""
+    cc = cfg.get("cs2", {})
+    if not cc.get("live_alerts", True):
+        return []
+    late_after = timedelta(minutes=cc.get("late_after_minutes", 10))
+    sent = []
+    for e in events:
+        if not ("fav" in e.tags and "match" in e.tags):
+            continue
+        if "live" in e.tags:
+            key = f"live-{e.id}"
+            if key not in state and e.start >= now - timedelta(minutes=45):
+                watch = _tag(e, "watch:")
+                if push(cfg, f"Live now: {e.title}",
+                        f"{e.competition}" + (f" · {e.detail}" if e.detail else "")
+                        + f"\nStarted {e.start.astimezone(tz):%H:%M}" + (f" · Watch: {watch}" if watch else ""),
+                        tags="video_game,red_circle", click=e.url, priority="high"):
+                    state[key] = now.isoformat()
+                    sent.append(key)
+            continue
+        overdue = now - e.start
+        if overdue < late_after or overdue > timedelta(hours=3):
+            continue
+        key = f"late-{e.id}"
+        count = int(state.get(f"latecount-{e.id}", "0|").split("|")[0])
+        last = state.get(key)
+        if count >= 4 or (last and now - datetime.fromisoformat(last) < timedelta(minutes=30)):
+            continue
+        mins = int(overdue.total_seconds() // 60)
+        title = f"Running late: {e.title}" if count == 0 else f"Still not started: {e.title}"
+        if push(cfg, title,
+                f"Due {e.start.astimezone(tz):%H:%M} ({mins} min ago), not started yet.\n"
+                f"You'll get a ping when it goes live.\n{e.competition}",
+                tags="hourglass,video_game", click=e.url):
+            state[key] = now.isoformat()
+            # "count|timestamp" keeps the entry fresh for the 45-day state cleanup
+            state[f"latecount-{e.id}"] = f"{count + 1}|{now.isoformat()}"
             sent.append(key)
     return sent
 
@@ -354,6 +417,9 @@ def _changes(cfg, events, state, now, tz) -> list:
                     sent.append(key)
             continue
         key = f"start-{e.id}"
+        if "live" in e.tags:               # already under way: the "Live now" ping covers it
+            state[key] = e.start.isoformat()
+            continue
         prev = state.get(key)
         state[key] = e.start.isoformat()
         if not prev:
@@ -367,10 +433,40 @@ def _changes(cfg, events, state, now, tz) -> list:
                 f"Now {fmt(e.start)} (was {fmt(old)})\n{e.competition}",
                 tags=f"alarm_clock,{icon}", click=e.url, priority="high"):
             sent.append(f"moved-{e.id}")
-        # allow a fresh reminder for the new time
-        for prefix in ("ko-", "fav-", "f1-"):
-            state.pop(f"{prefix}{e.id}", None)
+        # A fresh reminder for the new time - unless it's within the hour, when
+        # this "Delayed" ping already tells you the new time
+        # (Liverpool always gets its kick-off ping, which carries the line-ups.)
+        if e.sport == "liverpool" or e.start - now > timedelta(minutes=60):
+            for prefix in ("ko-", "fav-", "f1-"):
+                state.pop(f"{prefix}{e.id}", None)
+        else:
+            state.setdefault(f"fav-{e.id}" if e.sport == "cs2" else f"f1-{e.id}", now.isoformat())
     return sent
+
+
+def _timing(cfg, state, now, local) -> list:
+    """Log how long since the previous run, and warn (once a day) if runs stopped
+    for a while - e.g. the 10-minute timer is down and only GitHub's slow
+    hourly backup is running."""
+    import os
+    trigger = os.environ.get("GITHUB_EVENT_NAME", "local")
+    prev = state.get("lastrun")
+    state["lastrun"] = now.isoformat()
+    if not prev:
+        return []
+    gap = now - datetime.fromisoformat(prev)
+    mins = int(gap.total_seconds() // 60)
+    print(f"Run timing: previous run {mins} min ago (started by: {trigger})")
+    limit = timedelta(minutes=cfg.get("notifications", {}).get("max_gap_minutes", 35))
+    key = f"gap-{local.date().isoformat()}"
+    if gap > limit and key not in state:
+        if push(cfg, "Alerts were paused",
+                f"No check ran for {mins} min (until {local:%H:%M}), so some alerts may have been late.\n"
+                "If this keeps happening, check the 10-minute timer on cron-job.org.",
+                tags="warning"):
+            state[key] = now.isoformat()
+            return [key]
+    return []
 
 
 def _health(cfg, status, state, now, local) -> list:
