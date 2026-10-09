@@ -1,0 +1,10 @@
+# Exact versions for the GitHub Actions runner (it only needs requests + PyYAML).
+# Installed with --no-deps, so nothing unpinned can sneak in while the API keys
+# are loaded. To upgrade: bump versions here (or regenerate with
+# `pip-compile --generate-hashes` and add --require-hashes in the workflow).
+requests==2.34.2
+urllib3==2.8.0
+idna==3.20
+certifi==2026.7.22
+charset_normalizer==3.5.2
+PyYAML==6.0.3
