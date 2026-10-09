@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from ..keystore import get_secret
+from ..format import short_team
 from ..models import Event
 
 BASE = "https://api.pandascore.co/csgo"
@@ -170,10 +171,12 @@ def _match_event(m, competition: str, favs: dict) -> Event | None:
     if not when:
         return None
     teams = [((o or {}).get("opponent") or {}) for o in (m.get("opponents") or [])]
-    names = [t.get("name") or t.get("acronym") or "TBD" for t in teams] + ["TBD", "TBD"]
+    names = [short_team(t.get("name") or t.get("acronym") or "TBD") for t in teams] + ["TBD", "TBD"]
     mine = sorted({favs[x.lower()] for t in teams for x in (t.get("name"), t.get("acronym"))
                    if x and x.lower() in favs})
     stage = (m.get("tournament") or {}).get("name", "")
+    # PandaScore match names carry the round: "Upper bracket final: FaZe vs Spirit"
+    rnd = (m.get("name") or "").split(":")[0].strip() if ":" in (m.get("name") or "") else ""
     bo = f"BO{m['number_of_games']}" if m.get("number_of_games") else ""
     live = ""
     if m.get("status") == "running" and m.get("results"):
@@ -189,7 +192,12 @@ def _match_event(m, competition: str, favs: dict) -> Event | None:
         tags=["match", f"serie-{m.get('serie_id')}"]
              + ([f"watch:{_stream_label(_stream(m))}"] if _stream_label(_stream(m)) else [])
              + (["fav"] + [f"team:{t}" for t in mine] if mine else [])
-             + (["live"] if m.get("status") == "running" else []),
+             + (["live"] if m.get("status") == "running" else [])
+             + [f"pid:{m['id']}"]
+             + ([f"bo:{m['number_of_games']}"] if m.get("number_of_games") else [])
+             + ([f"stage:{stage}"] if stage else [])
+             + ([f"round:{rnd}"] if rnd else [])
+             + [f"tid:{t['id']}:{short_team(t.get('name') or '')}" for t in teams if t.get("id")],
     )
 
 

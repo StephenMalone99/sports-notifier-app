@@ -83,11 +83,7 @@ def _espn_lineup(match: Event) -> str | None:
             return None
         # Liverpool first
         teams.sort(key=lambda t: 0 if "liverpool" in t[0].lower() else 1)
-        lines = []
-        for team, formation, xi in teams:
-            head = f"{team.upper()}" + (f" ({formation})" if formation else "")
-            lines.append(head + "\n" + ", ".join(xi))
-        return "\n\n".join(lines)
+        return teams
     except Exception as exc:
         log.warning("Line-ups lookup failed: %s", str(exc).split("?")[0][:200])
         return None
@@ -150,11 +146,11 @@ def _sap_lineup(match: Event, team_id: int) -> str | None:
     if len(sides) < 2:
         return None
     sides.sort(key=lambda x: 0 if "liverpool" in x[0].lower() else 1)
-    return "\n\n".join(f"{n.upper()}" + (f" ({f})" if f else "") + "\n" + ", ".join(xi) for n, f, xi in sides)
+    return sides
 
 
-def fetch_lineup(match: Event, team_id: int = 44) -> str | None:
-    """Plain-text line-ups for both teams, or None if not announced / unavailable."""
+def fetch_lineups(match: Event, team_id: int = 44) -> list | None:
+    """[(team, formation, [11 names]), ...] with Liverpool first, or None if not out yet."""
     try:
         got = _sap_lineup(match, team_id)
         if got:
@@ -162,3 +158,11 @@ def fetch_lineup(match: Event, team_id: int = 44) -> str | None:
     except Exception as exc:
         log.warning("Line-ups (SportsAPI Pro) failed: %s", str(exc).split("?")[0][:150])
     return _espn_lineup(match)
+
+
+def fetch_lineup(match: Event, team_id: int = 44) -> str | None:
+    """Plain-text version (kept for the dashboard / older callers)."""
+    teams = fetch_lineups(match, team_id)
+    if not teams:
+        return None
+    return "\n".join(f"{t}" + (f" ({f})" if f else "") + ": " + ", ".join(xi) for t, f, xi in teams)

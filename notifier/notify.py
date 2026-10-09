@@ -17,8 +17,11 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from . import enrich
 from .collect import ROOT, collect, load_config
 from .keystore import get_secret
+from .format import (HIGH, LOW, NORMAL, Alert, dash, join, ordinal, short_comp,
+                     short_round, short_team, surname)
 from .models import Event
 
 STATE = ROOT / "state" / "sent.json"
@@ -41,20 +44,30 @@ def _save_state(state: dict):
     STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def push(cfg, title: str, body: str, tags: str = "", click: str = "", priority: str = "default"):
+PRIORITY = {"min": 1, "low": 2, "default": 3, "high": 4, "max": 5, "urgent": 5}
+
+
+def push(cfg, title: str, body: str, tags: str = "", click: str = "", priority: str = "default",
+         actions=None):
+    """Publish one notification. Uses ntfy's JSON API so titles keep every character
+    (en dashes, accents) and tap buttons are sent cleanly."""
     topic = get_secret("NTFY_TOPIC")
     if not topic:
         log.warning("NTFY_TOPIC not set — would have sent: %s", title)
         return False
     server = cfg.get("notifications", {}).get("ntfy_server", "https://ntfy.sh").rstrip("/")
-    headers = {"Title": title.encode("utf-8").decode("latin-1", "ignore"), "Priority": priority}
+    msg = {"topic": topic, "title": title, "message": body or " ",
+           "priority": PRIORITY.get(priority, 3)}
     if tags:
-        headers["Tags"] = tags
+        msg["tags"] = [t for t in tags.split(",") if t]
     if click:
-        headers["Click"] = click
+        msg["click"] = click
+    if actions:
+        msg["actions"] = [{"action": "view", "label": label, "url": url, "clear": False}
+                          for label, url in actions if url][:3]
     for attempt in range(3):   # ntfy.sh occasionally drops a connection - retry before giving up
         try:
-            r = requests.post(f"{server}/{topic}", data=body.encode("utf-8"), headers=headers, timeout=20)
+            r = requests.post(server, json=msg, timeout=20)
             r.raise_for_status()
             return True
         except requests.RequestException as exc:
@@ -63,6 +76,18 @@ def push(cfg, title: str, body: str, tags: str = "", click: str = "", priority: 
             if attempt < 2:
                 time.sleep(10)
     return False   # not marked as sent, so the next run tries again
+
+
+def send(cfg, alert: Alert, state: dict, sent: list, now) -> bool:
+    """Send an Alert once: skipped if its key is already in state."""
+    if alert.key in state:
+        return False
+    ok = push(cfg, alert.title, alert.body, tags=alert.emoji, click=alert.click,
+              priority=alert.priority, actions=alert.actions)
+    if ok:
+        state[alert.key] = now.isoformat()
+        sent.append(alert.key)
+    return ok
 
 
 def _digest_time(cfg) -> tuple[int, int]:
@@ -83,8 +108,8 @@ def _day_of(e: Event, day, tz) -> str:
     return f"day {(day - first).days + 1} of {total}" if total > 1 else "one day"
 
 
-def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | None:
-    """Plain-text morning summary for `day` (a local date), or None if nothing is on."""
+def build_digest(events: list[Event], day, tz, players=(), max_lines: int = 18) -> str | None:
+    """Morning summary for `day`: one line per item, only sections with something on."""
 
     def on(e, d):
         s = e.start.astimezone(tz).date()
@@ -92,83 +117,81 @@ def build_digest(events: list[Event], day, tz, max_matches: int = 12) -> str | N
         return s <= d <= f
 
     t = lambda e: e.start.astimezone(tz).strftime("%H:%M")
-    star = lambda e: "★ " if "fav" in e.tags else ""
-    parts = []
+    vs = lambda title: title.replace(" vs ", " v ")
+    sections = []
 
-    # Your CS2 teams (any event)
-    favs = [e for e in events if "fav" in e.tags and "match" in e.tags and on(e, day)]
-    if favs:
-        parts.append("YOUR TEAMS\n" + "\n".join(
-            f"{t(e)}  {e.title}\n       {e.competition}" + (f" · {e.detail}" if e.detail else "")
-            + (f"\n       Watch: {_tag(e, 'watch:')}" if _tag(e, 'watch:') else "")
-            for e in favs))
+    # CS2: your teams' matches, then which tracked events are running
+    favs = sorted([e for e in events if "fav" in e.tags and "match" in e.tags and on(e, day)
+                   and e.start.astimezone(tz).date() == day], key=lambda e: e.start)
+    events_on = [e for e in events if e.sport == "cs2" and e.all_day and on(e, day)]
+    if favs or events_on:
+        lines = ["CS2"]
+        for e in favs:
+            bo = _tag(e, "bo:")
+            lines.append(f"{t(e)}  {vs(e.title)}" + (f" · Bo{bo}" if bo else ""))
+        if events_on:
+            lines.append("On: " + ", ".join(f"{short_comp(e.title)} ({_day_of(e, day, tz)})"
+                                            for e in events_on[:3]))
+        sections.append(lines)
 
     # Liverpool
     lfc = [e for e in events if e.sport == "liverpool" and on(e, day)]
     if lfc:
-        parts.append("LIVERPOOL\n" + "\n".join(
-            f"{t(e)}  {e.title}\n       {e.competition} · {e.detail}"
-            + (f"\n       TV: {_tag(e, 'tv:')}" if _tag(e, 'tv:') else "") for e in lfc))
+        sections.append(["Liverpool"] + [
+            f"{t(e)}  {vs(e.title)} · " + join(short_comp(e.competition), _tag(e, "tv:"))
+            for e in lfc])
 
-    # CS2: each tracked event with today's matches underneath
-    tournaments = [e for e in events if e.sport == "cs2" and e.all_day and on(e, day)]
-    matches = [e for e in events if e.sport == "cs2" and "match" in e.tags and on(e, day)]
-    for tr in tournaments:
-        serie = next((x for x in tr.tags if x.startswith("serie-")), None)
-        mine = [m for m in matches if serie in m.tags]
-        lines = [f"CS2 · {tr.title} ({_day_of(tr, day, tz)})"]
-        if mine:
-            for m in mine[:max_matches]:
-                lines.append(f"{t(m)}  {star(m)}{m.title}" + (f"  ({m.detail})" if m.detail else ""))
-            if len(mine) > max_matches:
-                lines.append(f"…and {len(mine) - max_matches} more")
-            streams = [_tag(m, "watch:") for m in mine if _tag(m, "watch:")]
-            if streams:
-                lines.append("Watch: " + max(set(streams), key=streams.count))
-        else:
-            lines.append("No matches scheduled today (rest day or not announced yet)")
-        parts.append("\n".join(lines))
-
-    # F1: today's sessions, grouped by Grand Prix
+    # F1: today's sessions under the Grand Prix name
     f1 = [e for e in events if e.sport == "f1" and on(e, day)]
     for gp in dict.fromkeys(e.title.split(" - ")[0] for e in f1):
         mine = [e for e in f1 if e.title.startswith(gp)]
-        lines = [f"F1 · {gp}" + (f" ({mine[0].detail})" if mine[0].detail else "")]
-        lines += [f"{t(e)}  {_tag(e, 'session:')}" for e in mine]
-        if _tag(mine[0], "tv:"):
-            lines.append(f"TV: {_tag(mine[0], 'tv:')}")
-        parts.append("\n".join(lines))
+        sections.append([f"F1 · {short_comp(gp)}"] + [f"{t(e)}  {_tag(e, 'session:')}" for e in mine])
 
-    # Darts: today's event(s), with the match-ups underneath when available
-    d_matches = [e for e in events if e.sport == "darts" and "match" in e.tags and on(e, day)]
-    for e in [e for e in events if e.sport == "darts" and "match" not in e.tags and on(e, day)]:
-        if e.all_day:
-            lines = [f"DARTS · {e.title} ({_day_of(e, day, tz)})"] + ([e.detail] if e.detail else [])
-        else:
-            lines = [f"DARTS · {e.title}", f"{t(e)} start" + (f" · {e.detail}" if e.detail else "")]
-        if d_matches:
-            for m in d_matches[:max_matches]:
-                lines.append(f"{t(m)}  {m.title}" + (f"  ({m.detail})" if m.detail else ""))
-            if len(d_matches) > max_matches:
-                lines.append(f"…and {len(d_matches) - max_matches} more")
-            d_matches = []                  # list them once, under the first event
-        else:
-            lines.append("Order of play: pdc.tv")
-        parts.append("\n".join(lines))
+    # Darts: today's event, plus your players' matches (and finals/semis)
+    d_events = [e for e in events if e.sport == "darts" and "match" not in e.tags and on(e, day)]
+    if d_events:
+        surnames = [p.split()[-1].lower() for p in players]
+        picks = [m for m in events if m.sport == "darts" and "match" in m.tags and on(m, day)
+                 and (any(s in m.title.lower() for s in surnames)
+                      or any(w in _tag(m, "round:").lower() for w in ("final", "semi")))]
+        for e in d_events:
+            head = (f"Darts · {short_comp(e.title)} ({_day_of(e, day, tz)})" if e.all_day
+                    else f"Darts · {short_comp(e.title.replace(' - ', ' · '))} · {t(e)}")
+            lines = [head]
+            for m in sorted(picks, key=lambda m: m.start)[:6]:
+                rnd = short_round(_tag(m, "round:"))
+                pair = " v ".join(surname(x) for x in m.title.split(" vs "))
+                lines.append(f"{t(m)}  {pair}" + (f" · {rnd}" if rnd else ""))
+            picks = []                         # list them once, under the first event
+            sections.append(lines)
 
-    if not parts:
+    if not sections:
         return None
 
-    # Heads-up for tomorrow (event starts / Liverpool / darts nights; not every CS2 match)
+    # Tomorrow, on one line: your matches, Liverpool, F1 sessions, events starting
     tomorrow = day + timedelta(days=1)
-    soon = [e for e in events if e.start.astimezone(tz).date() == tomorrow
-            and ("match" not in e.tags or "fav" in e.tags)]
-    if soon:
-        parts.append("TOMORROW\n" + "\n".join(
-            (f"{e.title} starts" if e.all_day else f"{t(e)}  {star(e)}{e.title}") for e in soon))
+    soon = []
+    for e in sorted(events, key=lambda e: e.start):
+        if e.start.astimezone(tz).date() != tomorrow:
+            continue
+        if e.all_day:
+            soon.append(f"{short_comp(e.title)} starts")
+        elif e.sport == "f1":
+            soon.append(f"{t(e)} F1 {_tag(e, 'session:')}")
+        elif e.sport == "liverpool" or ("fav" in e.tags and "match" in e.tags):
+            soon.append(f"{t(e)} {vs(e.title)}")
+        elif e.sport == "darts" and "match" not in e.tags:
+            soon.append(f"{t(e)} {short_comp(e.title.split(' - ')[0])}")
 
-    body = "\n\n".join(parts)
-    return body if len(body.encode()) < 3900 else body[:3800] + "\n…(see dashboard)"
+    lines = []
+    for sec in sections:
+        lines += sec + [""]
+    if soon:
+        lines.append("Tomorrow: " + " · ".join(soon[:5]))
+    lines = [l for l in lines][:max_lines]
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
 
 
 def run(now: datetime | None = None, events: list[Event] | None = None):
@@ -203,17 +226,14 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
     for e in events:
         if not ("fav" in e.tags and "match" in e.tags):
             continue
-        key = f"fav-{e.id}"
-        if key not in state and now < e.start <= now + lead + SLACK:
-            mins = int((e.start - now).total_seconds() // 60)
-            who = " & ".join(x[5:] for x in e.tags if x.startswith("team:")) or "Your team"
-            if push(cfg, f"{who} play in {mins} min",
-                    f"{e.title}\n{e.competition}" + (f" · {e.detail}" if e.detail else "")
-                    + f"\n{e.start.astimezone(tz):%H:%M}"
-                    + (f" · Watch: {_tag(e, 'watch:')}" if _tag(e, 'watch:') else " · tap to watch"),
-                    tags="video_game,star", click=e.url, priority="high"):
-                state[key] = now.isoformat()
-                sent.append(key)
+        if f"fav-{e.id}" not in state and now < e.start <= now + lead + SLACK:
+            form = [f"{name} {f}" for tid, name in _tids(e) if (f := enrich.cs2_form(tid))]
+            send(cfg, Alert(
+                key=f"fav-{e.id}",
+                title=f"{e.title} · {e.start.astimezone(tz):%H:%M}",
+                lines=[_cs2_context(e), "Form: " + " · ".join(form) if form else ""],
+                emoji="video_game", click=e.url, priority=HIGH, actions=_cs2_actions(e),
+            ), state, sent, now)
 
     # 1c) F1 session reminders
     fc = cfg.get("f1", {})
@@ -222,15 +242,16 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
     for e in events:
         if e.sport != "f1" or _tag(e, "session:") not in remind:
             continue
-        key = f"f1-{e.id}"
-        if key not in state and now < e.start <= now + lead + SLACK:
-            mins = int((e.start - now).total_seconds() // 60)
-            if push(cfg, f"F1 {_tag(e, 'session:')} in {mins} min",
-                    f"{e.title.split(' - ')[0]}\n{e.detail}\n{e.start.astimezone(tz):%H:%M}"
-                    + (f" · TV: {_tag(e, 'tv:')}" if _tag(e, "tv:") else ""),
-                    tags="checkered_flag", click=e.url, priority="high"):
-                state[key] = now.isoformat()
-                sent.append(key)
+        if f"f1-{e.id}" not in state and now < e.start <= now + lead + SLACK:
+            rnd = e.competition.replace("F1 ", "").split(" · ")[0]          # "Round 19"
+            send(cfg, Alert(
+                key=f"f1-{e.id}",
+                title=f"{short_comp(e.title.split(' - ')[0])} · {_tag(e, 'session:')} · "
+                      f"{e.start.astimezone(tz):%H:%M}",
+                lines=[join(e.detail, rnd), f"TV: {_tag(e, 'tv:')}" if _tag(e, "tv:") else ""],
+                emoji="checkered_flag", click=F1_TIMING, priority=HIGH,
+                actions=[("Live timing", F1_TIMING)],
+            ), state, sent, now)
 
     # 1d) Results (optional)
     rc = cfg.get("results", {})
@@ -239,21 +260,19 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
         from .sources.cs2 import _fav_aliases
         jobs = []
         if rc.get("liverpool", True):
-            jobs.append(("liverpool", lambda: results.liverpool(cfg, now)))
+            jobs.append(("liverpool", lambda: results.liverpool(cfg, now, state)))
         if rc.get("cs2_favourites", True):
             watch = _cs2_watch(events, state, now)
             jobs.append(("cs2", lambda: results.cs2(cfg, now, _fav_aliases(cfg.get("cs2", {})),
-                                                    watch_ids=watch)))
+                                                    watch_ids=watch, events=events, tz=tz)))
         if rc.get("f1", True):
-            jobs.append(("f1", lambda: results.f1(cfg, now)))
+            jobs.append(("f1", lambda: results.f1(cfg, now, tz)))
         if rc.get("darts", True):
             jobs.append(("darts", lambda: results.darts(cfg, now, events)))
         for name, job in jobs:
             try:
-                for key, title, body, tags, click in job():
-                    if key not in state and push(cfg, title, body, tags=tags, click=click):
-                        state[key] = now.isoformat()
-                        sent.append(key)
+                for alert in job():
+                    send(cfg, alert, state, sent, now)
             except Exception as exc:
                 log.warning("%s results failed: %s", name, str(exc).split("?")[0][:150])
 
@@ -264,11 +283,10 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
     # 2) Morning digest
     digest_key = f"digest-{local.date().isoformat()}"
     if (local.hour, local.minute) >= _digest_time(cfg) and digest_key not in state:
-        body = build_digest(events, local.date(), tz)
+        body = build_digest(events, local.date(), tz,
+                            players=cfg.get("darts", {}).get("results_players", []))
         if body:
-            tags = ",".join(sorted({ICON[e.sport] for e in events
-                                    if e.sport.upper() in body.upper()} or {"calendar"}))
-            if push(cfg, f"Sports today - {local:%a %d %b}", body, tags=tags):
+            if push(cfg, f"Today · {local:%a %d %b}", body, tags="calendar", priority=LOW):
                 sent.append(digest_key)
         state[digest_key] = now.isoformat()  # mark done even if nothing was on
 
@@ -288,9 +306,9 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
 
 
 def _liverpool_reminders(cfg, events, state, now, tz) -> list:
-    """Ping before kick-off. With line-ups on, each run (every 10 min) checks for
-    the starting XIs from ~75 min before kick-off and sends the reminder as soon
-    as they're out - or at 40 min before kick-off without them."""
+    """Kick-off alert. With line-ups on, each run (every 10 min) checks for the
+    starting XIs from ~75 min before kick-off and sends as soon as they're out -
+    or at 40 min before kick-off without them."""
     lc = cfg.get("liverpool", {})
     lead = timedelta(minutes=lc.get("remind_minutes_before", 60))
     want_lineups = lc.get("lineups", True)
@@ -302,25 +320,35 @@ def _liverpool_reminders(cfg, events, state, now, tz) -> list:
         left = e.start - now
         if not (timedelta(0) < left <= lead + timedelta(minutes=15)):
             continue
-        lineup = None
+        teams = None
         if want_lineups:
-            from .lineups import fetch_lineup
+            from .lineups import fetch_lineups
             try:
-                lineup = fetch_lineup(e, lc.get("sportsapipro_team_id", 44))
+                teams = fetch_lineups(e, lc.get("sportsapipro_team_id", 44))
             except Exception as exc:
                 log.info("line-ups check failed: %s", str(exc).split("?")[0][:120])
-            if not lineup and left > timedelta(minutes=40):
+            if not teams and left > timedelta(minutes=40):
                 print(f"Line-ups not out yet ({int(left.total_seconds() // 60)} min to kick-off) - will check next run")
                 continue
-        mins = max(0, int(left.total_seconds() // 60))
-        tv = _tag(e, "tv:")
-        body = (f"{e.title}\n{e.competition} · {e.start.astimezone(tz):%H:%M}\n{e.detail}"
-                + (f"\nTV: {tv}" if tv else "")
-                + (f"\n\n{lineup}" if lineup else ("\n\nLine-ups not out yet" if want_lineups else "")))
-        title = f"Liverpool kick off in {mins} min" + (" - line-ups in" if lineup else "")
-        if push(cfg, title, body, tags="soccer,red_circle", click=e.url, priority="high"):
-            state[key] = now.isoformat()
-            sent.append(key)
+
+        # Context: competition · matchday · league positions ("2nd v 1st")
+        code, md = _tag(e, "fdcomp:"), _tag(e, "md:")
+        table = enrich.fd_table(code) if code in ("PL", "CL") else {}
+        pos = [table.get(int(x))[0] if x.isdigit() and table.get(int(x)) else None
+               for x in (_tag(e, "hid:"), _tag(e, "aid:"))]
+        positions = f"{ordinal(pos[0])} v {ordinal(pos[1])}" if all(pos) else ""
+        lines = [join(short_comp(e.competition), f"MD{md}" if md else "", positions)]
+        if teams:
+            lines += [f"{short_team(t)}" + (f" ({f})" if f else "") + ": " + ", ".join(xi)
+                      for t, f, xi in teams[:2]]
+        elif want_lineups:
+            lines.append("Line-ups not out yet")
+        if _tag(e, "tv:"):
+            lines.append(f"TV: {_tag(e, 'tv:')}")
+        send(cfg, Alert(
+            key=key, title=f"{e.title} · {e.start.astimezone(tz):%H:%M}", lines=lines,
+            emoji="soccer", click=BBC_LFC, priority=HIGH, actions=[("Match centre", BBC_LFC)],
+        ), state, sent, now)
     return sent
 
 
@@ -341,13 +369,11 @@ def _cs2_live_watch(cfg, events, state, now, tz) -> list:
         if "live" in e.tags:
             key = f"live-{e.id}"
             if key not in state and e.start >= now - timedelta(minutes=45):
-                watch = _tag(e, "watch:")
-                if push(cfg, f"Live now: {e.title}",
-                        f"{e.competition}" + (f" · {e.detail}" if e.detail else "")
-                        + f"\nStarted {e.start.astimezone(tz):%H:%M}" + (f" · Watch: {watch}" if watch else ""),
-                        tags="video_game,red_circle", click=e.url, priority="high"):
-                    state[key] = now.isoformat()
-                    sent.append(key)
+                send(cfg, Alert(
+                    key=key, title=f"LIVE: {e.title}",
+                    lines=[_cs2_context(e), f"Started {e.start.astimezone(tz):%H:%M}"],
+                    emoji="red_circle", click=e.url, priority=HIGH, actions=_cs2_actions(e),
+                ), state, sent, now)
             continue
         overdue = now - e.start
         if overdue < late_after or overdue > timedelta(hours=3):
@@ -360,14 +386,43 @@ def _cs2_live_watch(cfg, events, state, now, tz) -> list:
         mins = int(overdue.total_seconds() // 60)
         title = f"Running late: {e.title}" if count == 0 else f"Still not started: {e.title}"
         if push(cfg, title,
-                f"Due {e.start.astimezone(tz):%H:%M} ({mins} min ago), not started yet.\n"
-                f"You'll get a ping when it goes live.\n{e.competition}",
-                tags="hourglass,video_game", click=e.url):
+                f"Due {e.start.astimezone(tz):%H:%M} · {mins} min late\n"
+                f"You'll get a ping when it goes live",
+                tags="hourglass", click=e.url, actions=_cs2_actions(e)):
             state[key] = now.isoformat()
             # "count|timestamp" keeps the entry fresh for the 45-day state cleanup
             state[f"latecount-{e.id}"] = f"{count + 1}|{now.isoformat()}"
             sent.append(key)
     return sent
+
+
+F1_TIMING = "https://www.formula1.com/en/timing/f1-live"
+BBC_LFC = "https://www.bbc.co.uk/sport/football/teams/liverpool/scores-fixtures"
+
+
+def _tids(e: Event) -> list:
+    """[(pandascore team id, short name)] from a CS2 match event."""
+    out = []
+    for t in e.tags:
+        if t.startswith("tid:"):
+            _, tid, name = t.split(":", 2)
+            out.append((tid, name))
+    return out
+
+
+def _cs2_context(e: Event) -> str:
+    """'ESL Pro League S24 · Upper bracket final · Bo3'"""
+    bo = _tag(e, "bo:")
+    return join(short_comp(e.competition), _tag(e, "round:") or _tag(e, "stage:"),
+                f"Bo{bo}" if bo else "")
+
+
+def _cs2_actions(e: Event) -> list:
+    acts = []
+    if e.url and "hltv.org" not in e.url:
+        acts.append(("Watch", e.url))
+    acts.append(("HLTV", "https://www.hltv.org/matches"))
+    return acts
 
 
 def _cs2_watch(events, state, now) -> list[str]:
@@ -411,8 +466,8 @@ def _changes(cfg, events, state, now, tz) -> list:
             key = f"postponed-{e.id}"
             if key not in state and e.start > now - timedelta(days=1):
                 if push(cfg, f"Postponed: {e.title}",
-                        f"{e.competition} · was {fmt(e.start)}\nNew date to be confirmed.",
-                        tags="warning,soccer", click=e.url, priority="high"):
+                        f"Was {fmt(e.start)} · new date TBC\n{short_comp(e.competition)}",
+                        tags="warning", click=e.url, priority="high"):
                     state[key] = now.isoformat()
                     sent.append(key)
             continue
@@ -428,10 +483,12 @@ def _changes(cfg, events, state, now, tz) -> list:
         if abs(e.start - old) < threshold or e.start < now - timedelta(minutes=30):
             continue
         later = e.start > old
-        icon = {"liverpool": "soccer", "cs2": "video_game", "f1": "checkered_flag"}.get(e.sport, "calendar")
+        same_day = e.start.astimezone(tz).date() == old.astimezone(tz).date()
+        new_t = f"{e.start.astimezone(tz):%H:%M}" if same_day else fmt(e.start)
+        old_t = f"{old.astimezone(tz):%H:%M}" if same_day else fmt(old)
         if push(cfg, f"{'Delayed' if later else 'Moved earlier'}: {e.title}",
-                f"Now {fmt(e.start)} (was {fmt(old)})\n{e.competition}",
-                tags=f"alarm_clock,{icon}", click=e.url, priority="high"):
+                f"Now {new_t} (was {old_t})\n{short_comp(e.competition)}",
+                tags="alarm_clock", click=e.url, priority="high"):
             sent.append(f"moved-{e.id}")
         # A fresh reminder for the new time - unless it's within the hour, when
         # this "Delayed" ping already tells you the new time

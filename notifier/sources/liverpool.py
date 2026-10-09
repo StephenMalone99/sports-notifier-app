@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import requests
 
 from ..keystore import get_secret
+from ..format import short_team
 from ..models import Event
 
 FD_TEAM_ID = 64          # Liverpool on football-data.org
@@ -29,7 +30,8 @@ def _fd(cfg) -> list[Event]:
     r.raise_for_status()
     events = []
     for m in r.json().get("matches", []):
-        home, away = m["homeTeam"]["name"], m["awayTeam"]["name"]
+        home = short_team(m["homeTeam"].get("shortName") or m["homeTeam"]["name"])
+        away = short_team(m["awayTeam"].get("shortName") or m["awayTeam"]["name"])
         lfc_home = m["homeTeam"]["id"] == FD_TEAM_ID
         opponent = away if lfc_home else home
         events.append(Event(
@@ -48,7 +50,10 @@ def _fd(cfg) -> list[Event]:
             ] if x),
             url="https://www.liverpoolfc.com/fixtures",
             tags=["home" if lfc_home else "away"]
-                 + (["postponed"] if m.get("status") in ("POSTPONED", "SUSPENDED") else []),
+                 + (["postponed"] if m.get("status") in ("POSTPONED", "SUSPENDED") else [])
+                 + [f"fd:{m['id']}", f"fdcomp:{(m.get('competition') or {}).get('code', '')}",
+                    f"hid:{m['homeTeam']['id']}", f"aid:{m['awayTeam']['id']}"]
+                 + ([f"md:{m['matchday']}"] if m.get("matchday") else []),
         ))
     return events
 
@@ -74,7 +79,7 @@ def _tsdb(cfg) -> list[Event]:
         events.append(Event(
             id=f"lfc-tsdb-{m['idEvent']}",
             sport="liverpool",
-            title=m.get("strEvent") or "Liverpool match",
+            title=" vs ".join(short_team(x) for x in (m.get("strEvent") or "Liverpool match").split(" vs ")),
             start=start,
             competition=m.get("strLeague") or "",
             detail="Home · Anfield" if lfc_home else "Away",
