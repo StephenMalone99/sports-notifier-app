@@ -266,7 +266,7 @@ def run(now: datetime | None = None, events: list[Event] | None = None):
             jobs.append(("cs2", lambda: results.cs2(cfg, now, _fav_aliases(cfg.get("cs2", {})),
                                                     watch_ids=watch, events=events, tz=tz)))
         if rc.get("f1", True):
-            jobs.append(("f1", lambda: results.f1(cfg, now, tz)))
+            jobs.append(("f1", lambda: results.f1(cfg, now, tz, events=events)))
         if rc.get("darts", True):
             jobs.append(("darts", lambda: results.darts(cfg, now, events)))
         for name, job in jobs:

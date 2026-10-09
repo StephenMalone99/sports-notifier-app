@@ -270,7 +270,7 @@ def _when(d, fallback_date=None):
     return datetime.fromisoformat(f"{date}T{t}" + ("" if "+" in t else "+00:00"))
 
 
-def f1(cfg, now, tz=None, window_hours=36) -> list:
+def f1(cfg, now, tz=None, window_hours=36, events=()) -> list:
     out = []
     tv = (cfg.get("f1") or {}).get("tv", "")
     gp = lambda race: short_comp(race["raceName"])
@@ -297,6 +297,14 @@ def f1(cfg, now, tz=None, window_hours=36) -> list:
                 lines=[" · ".join(parts), race_line],
                 emoji="checkered_flag", click=F1_RESULTS, actions=[("Results", F1_RESULTS)],
             ))
+
+    # Sprint Qualifying: sprint pole + top 3 (not in Jolpica, so from OpenF1)
+    try:
+        sq = _sprint_quali(now, window_hours, tz, events, tv)
+        if sq:
+            out.append(sq)
+    except Exception as exc:
+        log.info("Sprint qualifying result skipped: %s", str(exc).split("?")[0][:120])
 
     # Sprint and race: winner, podium, fastest lap, championship top 3
     standings = None
@@ -333,6 +341,58 @@ def f1(cfg, now, tz=None, window_hours=36) -> list:
             actions=[("Results", race.get("url") or F1_RESULTS)],
         ))
     return out
+
+
+OPENF1 = "https://api.openf1.org/v1"
+
+
+def _sprint_quali(now, window_hours, tz, events=(), tv=""):
+    """'Singapore GP · Sprint pole: Norris' from OpenF1 (free, no key), or None."""
+    def get(path, **params):
+        r = requests.get(f"{OPENF1}/{path}", params=params, timeout=20)
+        r.raise_for_status()
+        return r.json()
+
+    sessions = [s for s in get("sessions", year=now.year, session_name="Sprint Qualifying")
+                if s.get("date_end")]
+    done = [s for s in sessions if _dt(s["date_end"]) <= now]
+    if not done:
+        return None
+    s = max(done, key=lambda x: x["date_end"])
+    if _dt(s["date_end"]) < now - timedelta(hours=window_hours):
+        return None
+    key = s["session_key"]
+    rows = sorted((r for r in get("session_result", session_key=key) if r.get("position")),
+                  key=lambda r: r["position"])[:3]
+    if not rows:
+        return None                      # results not published yet - next run tries again
+    names = {d["driver_number"]: d.get("last_name") or d.get("name_acronym", "?")
+             for d in get("drivers", session_key=key)}
+
+    def gap(r):
+        g = r.get("gap_to_leader")
+        if isinstance(g, list):          # qualifying: one gap per part (SQ1-SQ3); use the last set
+            g = next((x for x in reversed(g) if x not in (None, "")), None)
+        try:
+            return f" +{float(g):.3f}" if g and float(g) > 0 else ""
+        except (TypeError, ValueError):
+            return ""
+
+    parts = [f"{r['position']} {names.get(r['driver_number'], '?')}{gap(r) if i else ''}"
+             for i, r in enumerate(rows)]
+    meeting = (get("meetings", meeting_key=s["meeting_key"]) or [{}])[0]
+    gp = short_comp(meeting.get("meeting_name") or f"{s.get('country_name', '')} GP")
+    # When the Sprint itself is, from the F1 events we already have
+    sprint = next((e for e in sorted(events or [], key=lambda e: e.start)
+                   if e.sport == "f1" and e.start > now and "session:Sprint" in e.tags), None)
+    sprint_line = join(f"Sprint {(sprint.start.astimezone(tz) if tz else sprint.start):%a %H:%M}"
+                       if sprint else "", tv)
+    return Alert(
+        key=f"res-f1-sq-{key}",
+        title=f"{gp} · Sprint pole: {names.get(rows[0]['driver_number'], '?')}",
+        lines=[" · ".join(parts), sprint_line],
+        emoji="checkered_flag", click=F1_RESULTS, actions=[("Results", F1_RESULTS)],
+    )
 
 
 # ---------- Darts (with match stats from SportsAPI Pro) ----------

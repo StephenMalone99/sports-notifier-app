@@ -56,7 +56,7 @@ darts:
 
 f1:
   sessions: [Sprint Qualifying, Sprint, Qualifying, Race]   # add Practice 1/2/3 if wanted
-  remind: [Qualifying, Sprint, Race]                         # phone ping before these
+  remind: [Sprint Qualifying, Qualifying, Sprint, Race]      # phone ping before these
   remind_minutes_before: 60
   tv: Sky Sports F1 / NOW
 
